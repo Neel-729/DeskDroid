@@ -399,7 +399,7 @@ void initHardware(){
     while(true);
   }
 
-//  if(!rtc.isrunning())
+  if(!rtc.isrunning())
     rtc.adjust(DateTime(F(__DATE__),F(__TIME__)));
 
   pinMode(ENCODER_CLK,INPUT_PULLUP);
