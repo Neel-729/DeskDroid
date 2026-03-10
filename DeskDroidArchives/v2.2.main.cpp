@@ -6,7 +6,7 @@
 #include <Preferences.h>
 #include <string.h>
 
-#define FirmwareVersion "2.1"
+#define FirmwareVersion "2.3"
 
 constexpr uint8_t ENCODER_CLK = 32;
 constexpr uint8_t ENCODER_DT  = 33;
@@ -17,9 +17,13 @@ LiquidCrystal_I2C lcd(0x27,16,2);
 RTC_DS1307 rtc;
 Preferences prefs;
 
+// ================= STATES =================
+
 enum State { CLOCK, TIMER, STOPWATCH, REMINDERS, SETTINGS };
 State currentState = CLOCK;
 bool stateChanged = true;
+
+// ================= INPUT EVENTS =================
 
 enum InputEvent {
   EVENT_NONE,
@@ -30,13 +34,18 @@ enum InputEvent {
   EVENT_ROTATE_CCW
 };
 
+// ================= TIMERS =================
+
 unsigned long lastDisplayRefresh = 0;
 unsigned long lastQuoteScroll = 0;
+unsigned long quotePauseUntil = 0;
 unsigned long lastRTCUpdate = 0;
 unsigned long beepUntil = 0;
 
 constexpr uint16_t LONG_PRESS = 600;
 constexpr uint16_t DOUBLE_PRESS_TIME = 300;
+
+// ================= BUTTON ENGINE =================
 
 bool buttonDown=false;
 unsigned long buttonDownTime=0;
@@ -44,7 +53,11 @@ unsigned long buttonDownTime=0;
 bool singlePressWaiting=false;
 unsigned long singlePressTime=0;
 
+// ================= RTC CACHE =================
+
 DateTime cachedTime;
+
+// ================= TIMER =================
 
 int timerHours=0;
 int timerMinutes=5;
@@ -59,22 +72,65 @@ bool timerEditMode=false;
 bool timerAlarmActive=false;
 
 unsigned long lastAlarmBeep=0;
+unsigned long alarmStartTime=0;
+
+// ================= TIMER EDIT =================
 
 enum TimerEditField { EDIT_HOURS, EDIT_MINUTES, EDIT_SECONDS };
 TimerEditField timerEditField=EDIT_MINUTES;
 
+// ================= BLINK =================
+
 bool blinkState=true;
 unsigned long lastBlink=0;
+
+// ================= STOPWATCH =================
 
 unsigned long stopwatchStartTime=0;
 unsigned long stopwatchElapsed=0;
 bool stopwatchRunning=false;
 
-const char quote1[] PROGMEM="Discipline is freedom.   ";
-const char quote2[] PROGMEM="Focus beats talent.   ";
-const char quote3[] PROGMEM="Action creates clarity.   ";
+// ================= QUOTES =================
 
-const char* const quotes[] PROGMEM={quote1,quote2,quote3};
+const char* const quotes[] PROGMEM={
+"Discipline is freedom.",
+"Focus beats talent.",
+"Action creates clarity.",
+"Do the hard things first.",
+"Consistency beats intensity.",
+"Small steps daily.",
+"Build systems not goals.",
+"Clarity follows action.",
+"Momentum creates motivation.",
+"Effort compounds."
+};
+
+const uint8_t QUOTE_COUNT = sizeof(quotes)/sizeof(quotes[0]);
+
+uint8_t lastQuote=255;
+
+// Bitmask to track used quotes (supports up to 32 quotes)
+uint32_t quoteUsedMask = 0;
+uint8_t quoteUsedCount = 0;
+
+uint8_t pickQuote(){
+
+ if(quoteUsedCount >= QUOTE_COUNT){
+  quoteUsedMask = 0;
+  quoteUsedCount = 0;
+ }
+
+ uint8_t q;
+ do{
+  q = random(QUOTE_COUNT);
+ }while( (quoteUsedMask & (1UL << q)) || q == lastQuote );
+
+ quoteUsedMask |= (1UL << q);
+ quoteUsedCount++;
+ lastQuote = q;
+
+ return q;
+}
 
 char activeQuote[96];
 int currentQuoteIdx=0;
@@ -99,7 +155,7 @@ struct Settings {
 Settings deviceSettings;
 
 const char* settingsMenu[]={
-  "Brightness",
+  "Backlight",
   "Buzzer",
   "Quotes",
   "Time Format",
@@ -116,8 +172,6 @@ uint8_t adjustMinute=0;
 bool adjustHourField=true;
 bool settingsMenuActive=false;
 unsigned long rtcSyncMessageUntil=0;
-
-uint8_t brightnessLevels[5]={0,64,128,192,255};
 
 // ================= ENCODER =================
 
@@ -142,6 +196,7 @@ int8_t readEncoder(){
  return 0;
 }
 
+
 // ================= BUZZER =================
 
 void triggerBeep(int duration=50){
@@ -154,7 +209,7 @@ void updateBuzzer(){
   digitalWrite(BUZZER_PIN,LOW);
 }
 
-// ================= LCD HELPERS =================
+// ================= LCD BUFFER =================
 
 char lcdBuffer[2][17]={{0}};
 
@@ -173,12 +228,6 @@ void writeRow(int row,const char* s){
 
  lcd.setCursor(0,row);
  lcd.print(buf);
-}
-
-void applyBrightness(){
- uint8_t lvl=deviceSettings.brightness;
- if(lvl>4) lvl=4;
- lcd.setBacklight(brightnessLevels[lvl]);
 }
 
 // ================= BOOT =================
@@ -234,8 +283,8 @@ void loadQuote(){
 
  const char* ptr=(const char*)pgm_read_ptr(&(quotes[currentQuoteIdx]));
  
- strncpy_P(activeQuote,ptr,sizeof(activeQuote)-17);
- activeQuote[sizeof(activeQuote)-17]='\0';
+ strncpy_P(activeQuote,ptr,sizeof(activeQuote)-1);
+ activeQuote[sizeof(activeQuote)-1]='\0';
 
  activeQuoteLength=strlen(activeQuote);
 
@@ -250,11 +299,23 @@ void loadQuote(){
  activeQuote[activeQuoteLength]='\0';
 
  scrollPosition=0;
+
+ for(int i=0;i<16;i++)
+  quoteRow[i]=activeQuote[i];
+
+ quoteRow[16]='\0';
+
+ quotePauseUntil=millis()+2500;
 }
 
 void updateQuoteScroll(){
 
- if(!deviceSettings.quotes) return;
+ if(!deviceSettings.quotes){
+  strcpy(quoteRow,"                ");
+  return;
+ }
+
+ if(millis()<quotePauseUntil) return;
 
  if(millis()-lastQuoteScroll>350){
 
@@ -265,8 +326,10 @@ void updateQuoteScroll(){
 
   scrollPosition++;
 
-  if(scrollPosition>=activeQuoteLength)
-   scrollPosition=0;
+  if(scrollPosition>=activeQuoteLength){
+   currentQuoteIdx=pickQuote();
+   loadQuote();
+  }
 
   lastQuoteScroll=millis();
  }
@@ -340,10 +403,8 @@ void renderSettingsScreen(){
   switch(settingsIndex){
 
    case 0:{
-    writeRow(0,"Brightness");
-    char buf[17];
-    snprintf(buf,sizeof(buf),"Level %d",deviceSettings.brightness+1);
-    writeRow(1,buf);
+    writeRow(0,"Backlight");
+    writeRow(1,deviceSettings.brightness?"ON":"OFF");
     break;}
 
    case 1:
@@ -391,7 +452,7 @@ void renderSettingsScreen(){
 
    case 5:
     writeRow(0,"DeskDroid");
-    writeRow(1,"v2.2");
+    writeRow(1,"v2.3");
     break;
 
   }
@@ -399,7 +460,7 @@ void renderSettingsScreen(){
  }
 }
 
-// ================= TIMER / STOPWATCH =================
+// ================= TIMER =================
 
 void renderTimerScreen(){
 
@@ -487,6 +548,7 @@ void updateTimer(){
     timerRunning=false;
     timerRemainingMillis=0;
     timerAlarmActive=true;
+    alarmStartTime=millis();
     return;
   }
 
@@ -510,6 +572,8 @@ void updateTimer(){
  }
 }
 
+// ================= STOPWATCH =================
+
 void renderStopwatchScreen(){
 
  writeRow(0,"Stopwatch");
@@ -523,7 +587,7 @@ void renderStopwatchScreen(){
 void updateStopwatch(){
 
  if(stopwatchRunning)
-  stopwatchElapsed=millis()-stopwatchStartTime;
+  stopwatchElapsed = (unsigned long)(millis() - stopwatchStartTime);
 
  unsigned long t=stopwatchElapsed;
 
@@ -556,7 +620,9 @@ void initHardware(){
   while(true);
  }
 
- rtc.adjust(DateTime(F(__DATE__),F(__TIME__)));
+ if(!rtc.isrunning()){
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+ }
 
  pinMode(ENCODER_CLK,INPUT_PULLUP);
  pinMode(ENCODER_DT,INPUT_PULLUP);
@@ -567,11 +633,10 @@ void initHardware(){
  deviceSettings.buzzer = prefs.getBool("buzzer", true);
  deviceSettings.quotes = prefs.getBool("quotes", true);
  deviceSettings.format24 = prefs.getBool("24h", true);
- deviceSettings.brightness = prefs.getUChar("bright", 4);
+ deviceSettings.brightness = prefs.getUChar("bright", 1);
+ if(deviceSettings.brightness) lcd.backlight(); else lcd.noBacklight();
 
- applyBrightness();
-
- randomSeed(rtc.now().unixtime());
+ randomSeed(esp_random());
 }
 
 // ================= INPUT ENGINE =================
@@ -620,16 +685,18 @@ InputEvent readInput(){
 // ================= SETUP =================
 
 void setup(){
+
  initHardware();
 
  timerTotalMillis=((unsigned long)timerHours*3600UL+(unsigned long)timerMinutes*60UL+(unsigned long)timerSeconds)*1000UL;
+   if(timerTotalMillis==0) timerTotalMillis=1000;
  timerRemainingMillis=timerTotalMillis;
 
  while(!bootAnimation()){
   updateBuzzer();
  }
 
- currentQuoteIdx=random(0,3);
+ currentQuoteIdx=pickQuote();
  loadQuote();
 
  lcd.clear();
@@ -647,6 +714,10 @@ void loop(){
   lastAlarmBeep=now;
  }
 
+ if(timerAlarmActive && now-alarmStartTime>30000){
+  timerAlarmActive=false;
+ }
+
  InputEvent ev=readInput();
 
  if(ev==EVENT_ROTATE_CW || ev==EVENT_ROTATE_CCW){
@@ -656,38 +727,34 @@ void loop(){
   if(currentState==TIMER && timerEditMode && !timerRunning){
 
    if(timerEditField==EDIT_HOURS){
-     timerHours+=step; if(timerHours<0) timerHours=0; if(timerHours>99) timerHours=99;
+     timerHours = constrain(timerHours + step,0,99);
    } else if(timerEditField==EDIT_MINUTES){
-     timerMinutes+=step; if(timerMinutes<0) timerMinutes=0; if(timerMinutes>59) timerMinutes=59;
+     timerMinutes = constrain(timerMinutes + step,0,59);
    } else {
-     timerSeconds+=step; if(timerSeconds<0) timerSeconds=0; if(timerSeconds>59) timerSeconds=59;
+     timerSeconds = constrain(timerSeconds + step,0,59);
    }
 
    timerTotalMillis=((unsigned long)timerHours*3600UL+(unsigned long)timerMinutes*60UL+(unsigned long)timerSeconds)*1000UL;
+   if(timerTotalMillis==0) timerTotalMillis=1000;
    timerRemainingMillis=timerTotalMillis;
 
   } else if(currentState==SETTINGS && settingsMenuActive && settingsEditing){
 
    if(settingsIndex==4 && settingsEditing && timeAdjustMode){
-     if(adjustHourField){ adjustHour+=step; if(adjustHour>23) adjustHour=0; }
-     else { adjustMinute+=step; if(adjustMinute>59) adjustMinute=0; }
+     if(adjustHourField){ adjustHour=(adjustHour+step+24)%24; }
+     else { adjustMinute=(adjustMinute+step+60)%60; }
    }
    else if(settingsIndex==0){
-     int lvl=deviceSettings.brightness;
-     lvl+=step;
-     if(lvl<0) lvl=0;
-     if(lvl>4) lvl=4;
-     deviceSettings.brightness=lvl;
-     applyBrightness();
+     deviceSettings.brightness = !deviceSettings.brightness;
+     if(deviceSettings.brightness) lcd.backlight();
+     else lcd.noBacklight();
    }
    else if(settingsIndex==1){ deviceSettings.buzzer=!deviceSettings.buzzer; }
    else if(settingsIndex==2){ deviceSettings.quotes=!deviceSettings.quotes; }
    else if(settingsIndex==3){ deviceSettings.format24=!deviceSettings.format24; }
-   else if(settingsIndex==4 && settingsEditing && timeAdjustMode){
-     adjustHourField = !adjustHourField;
-   }
 
   } else if(currentState==SETTINGS && settingsMenuActive && !settingsEditing){
+
 
    int newIndex = (int)settingsIndex + step;
    if(newIndex < 0) newIndex = SETTINGS_COUNT-1;
@@ -739,7 +806,7 @@ void loop(){
   }
 
   else if(currentState==CLOCK){
-   currentQuoteIdx=(currentQuoteIdx+1)%3; loadQuote();
+   currentQuoteIdx=pickQuote(); loadQuote();
   }
 
   else if(currentState==TIMER){
@@ -771,6 +838,7 @@ void loop(){
   else{
 
     if(currentState==TIMER){ timerRunning=false; timerAlarmActive=false; timerRemainingMillis=timerTotalMillis; }
+
     if(currentState==STOPWATCH){ stopwatchRunning=false; stopwatchElapsed=0; }
 
   }
@@ -779,12 +847,15 @@ void loop(){
  }
 
  if(ev==EVENT_LONG_PRESS){
+
   if(currentState==TIMER && !timerRunning) timerEditMode=!timerEditMode;
+
   else if(currentState==SETTINGS){
     settingsEditing=false;
     settingsMenuActive=false;
     stateChanged=true;
   }
+
   if(deviceSettings.buzzer) triggerBeep(120);
  }
 
