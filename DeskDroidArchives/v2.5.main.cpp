@@ -1,19 +1,27 @@
 #include <esp_system.h>
 #include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <RTClib.h>
 #include <pgmspace.h>
+#include <Preferences.h>
 #include <string.h>
-#include "core/events.h"
-#include "core/settings_store.h"
-#include "drivers/buzzer_driver.h"
-#include "drivers/encoder_driver.h"
-#include "drivers/lcd_driver.h"
-#include "drivers/neopixel_driver.h"
-#include "drivers/rtc_driver.h"
-#include "features/reminders.h"
-#include "features/stopwatch.h"
-#include "features/timer.h"
+#include <Adafruit_NeoPixel.h>
 
-#define FirmwareVersion "2.4"
+#define FirmwareVersion "2.5"
+
+#define LED_PIN 13
+#define LED_COUNT 83
+
+constexpr uint8_t ENCODER_CLK = 19;
+constexpr uint8_t ENCODER_DT  = 18;
+constexpr uint8_t ENCODER_SW  = 5;
+constexpr uint8_t BUZZER_PIN  = 4;
+
+Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+LiquidCrystal_I2C lcd(0x27,16,2);
+RTC_DS1307 rtc;
+Preferences prefs;
 
 // ================= UI STATE =================
 
@@ -36,24 +44,94 @@ AppState currentState = STATE_CLOCK;
 AppState resumeStateAfterReminder = STATE_CLOCK;
 bool stateChanged = true;
 
+// ================= INPUT EVENTS =================
+
+enum InputEvent {
+  EVENT_NONE,
+  EVENT_CLICK,
+  EVENT_DOUBLE_CLICK,
+  EVENT_LONG_PRESS,
+  EVENT_ROTATE_CW,
+  EVENT_ROTATE_CCW
+};
+
+// ================= NeoPixel =================
+
+enum LedState {
+  LED_IDLE,
+  LED_TIMER_ALARM,
+  LED_REMINDER_ALARM,
+  LED_SUCCESS
+};
+
+LedState currentLedState = LED_IDLE;
+
+enum LedIdlePreset {
+  IDLE_OFF,
+  IDLE_STATIC,
+  IDLE_BREATH,
+  IDLE_RAINBOW,
+  IDLE_PULSE
+};
+
+LedIdlePreset idlePreset = IDLE_STATIC;
+
+
 // ================= TIMERS =================
 
 unsigned long lastDisplayRefresh = 0;
 unsigned long lastQuoteScroll = 0;
 unsigned long quotePauseUntil = 0;
 unsigned long lastRTCUpdate = 0;
+unsigned long beepUntil = 0;
 unsigned long lastLightScheduleCheck = 0;
-unsigned long lastReminderCheck = 0;
 bool lightScheduleAllowsOutput = true;
+
+constexpr uint16_t LONG_PRESS = 600;
+constexpr uint16_t DOUBLE_PRESS_TIME = 300;
+
+// ================= BUTTON ENGINE =================
+
+bool buttonDown=false;
+unsigned long buttonDownTime=0;
+
+bool singlePressWaiting=false;
+unsigned long singlePressTime=0;
 
 // ================= RTC CACHE =================
 
 DateTime cachedTime;
 
+// ================= TIMER =================
+
+int timerHours=0;
+int timerMinutes=5;
+int timerSeconds=0;
+
+unsigned long timerEndTime=0;
+unsigned long timerRemainingMillis=0;
+unsigned long timerTotalMillis=0;
+
+bool timerRunning=false;
+
+unsigned long lastAlarmBeep=0;
+unsigned long alarmStartTime=0;
+
+// ================= TIMER EDIT =================
+
+enum TimerEditField { EDIT_HOURS, EDIT_MINUTES, EDIT_SECONDS };
+TimerEditField timerEditField=EDIT_MINUTES;
+
 // ================= BLINK =================
 
 bool blinkState=true;
 unsigned long lastBlink=0;
+
+// ================= STOPWATCH =================
+
+unsigned long stopwatchStartTime=0;
+unsigned long stopwatchElapsed=0;
+bool stopwatchRunning=false;
 
 // ================= QUOTES =================
 
@@ -109,7 +187,21 @@ const char* months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct
 
 // ================= SETTINGS =================
 
-DeviceSettings deviceSettings;
+struct Settings {
+  bool buzzer=true;
+  bool quotes=true;
+  bool format24=true;
+  uint8_t brightness=4;
+  uint8_t ledBrightness=5;
+  uint8_t idlePreset = 1;
+  bool autoLights = true;
+  uint8_t lightsOnHour = 7;
+  uint8_t lightsOnMinute = 0;
+  uint8_t lightsOffHour = 22;
+  uint8_t lightsOffMinute = 0;
+};
+
+Settings deviceSettings;
 
 const char* settingsMenu[]={
   "Backlight",
@@ -144,10 +236,54 @@ uint8_t adjustDay=1;
 enum DateField { DATE_DAY, DATE_MONTH, DATE_YEAR };
 DateField adjustDateField = DATE_DAY;
 
+// ================= ENCODER =================
+
+int8_t readEncoder(){
+  static uint8_t prevState=0;
+  static int8_t stepAccum=0;
+
+  prevState<<=2;
+
+  if(digitalRead(ENCODER_CLK)) prevState|=0x02;
+  if(digitalRead(ENCODER_DT))  prevState|=0x01;
+
+  prevState&=0x0F;
+
+  if(prevState==0b1101||prevState==0b0100||prevState==0b0010||prevState==0b1011) stepAccum++;
+  if(prevState==0b1110||prevState==0b0111||prevState==0b0001||prevState==0b1000) stepAccum--;
+
+  if(stepAccum>=2){ stepAccum=0; return 1; }
+  if(stepAccum<=-2){ stepAccum=0; return -1; }
+
+  return 0;
+}
+
+// ================= BUZZER =================
+
+void triggerBeep(int duration=50){
+  digitalWrite(BUZZER_PIN,HIGH);
+  beepUntil=millis()+duration;
+}
+
+void updateBuzzer(){
+  if(digitalRead(BUZZER_PIN)==HIGH && millis()>beepUntil)
+    digitalWrite(BUZZER_PIN,LOW);
+}
+
 // ================= LCD BUFFER =================
 
+char lcdBuffer[2][17]={{0}};
+
 void writeRow(int row,const char* s){
-  LcdDriver::writeRow(row,s);
+  char buf[17];
+  memset(buf,' ',16);
+  buf[16]='\0';
+  for(int i=0;i<16 && s[i]!='\0';i++) buf[i]=s[i];
+
+  if(strncmp(lcdBuffer[row],buf,16)==0) return;
+  strcpy(lcdBuffer[row],buf);
+  lcd.setCursor(0,row);
+  lcd.print(buf);
 }
 
 // ================= STATE HELPERS =================
@@ -223,11 +359,12 @@ bool lightsAllowedNow(){
 }
 
 void updateLightScheduleState(){
-  lightScheduleAllowsOutput = !deviceSettings.autoLights || isWithinLightSchedule(RtcDriver::now());
+  lightScheduleAllowsOutput = !deviceSettings.autoLights || isWithinLightSchedule(rtc.now());
 }
 
 void applyBacklightSetting(){
-  LcdDriver::setBacklight(deviceSettings.brightness && lightScheduleAllowsOutput);
+  if(deviceSettings.brightness && lightScheduleAllowsOutput) lcd.backlight();
+  else lcd.noBacklight();
 }
 
 void refreshLightOutputs(){
@@ -247,7 +384,7 @@ bool bootAnimation(){
 
   if(stage==0){
     writeRow(0,"DeskDroid v" FirmwareVersion);
-    BuzzerDriver::trigger();
+    triggerBeep();
     lastStep=millis();
     stage=1;
   }
@@ -256,8 +393,8 @@ bool bootAnimation(){
     if(millis()-lastStep>150){
       writeRow(1,frames[stage-1]);
       lastStep=millis();
-      if(stage==6) BuzzerDriver::trigger(50);
-      if(stage==8) BuzzerDriver::trigger(50);
+      if(stage==6) triggerBeep(50);
+      if(stage==8) triggerBeep(50);
       stage++;
     }
   }
@@ -312,7 +449,7 @@ void updateQuoteScroll(){
 
 void updateClockTime(){
   if(millis()-lastRTCUpdate>1000){
-    cachedTime=RtcDriver::now();
+    cachedTime=rtc.now();
     lastRTCUpdate=millis();
   }
 
@@ -341,7 +478,17 @@ void renderClockScreen(){
 // ================= SETTINGS =================
 
 void saveSettings(){
-  SettingsStore::saveDeviceSettings(deviceSettings);
+  prefs.putBool("buzzer",deviceSettings.buzzer);
+  prefs.putBool("quotes",deviceSettings.quotes);
+  prefs.putBool("24h",deviceSettings.format24);
+  prefs.putUChar("bright",deviceSettings.brightness);
+  prefs.putUChar("ledb", deviceSettings.ledBrightness);
+  prefs.putUChar("ledmode", deviceSettings.idlePreset);
+  prefs.putBool("autol", deviceSettings.autoLights);
+  prefs.putUChar("lonh", deviceSettings.lightsOnHour);
+  prefs.putUChar("lonm", deviceSettings.lightsOnMinute);
+  prefs.putUChar("loffh", deviceSettings.lightsOffHour);
+  prefs.putUChar("loffm", deviceSettings.lightsOffMinute);
 }
 
 void resetSettingsEditModes(){
@@ -477,7 +624,7 @@ void renderSettingsScreen(){
 void renderTimerScreen(){
   if(currentState==STATE_TIMER_ALARM){
     writeRow(0,"Timer Finished!");
-    unsigned long total=TimerFeature::totalMillis();
+    unsigned long total=timerTotalMillis;
     int h=total/3600000;
     int m=(total/60000)%60;
     int s=(total/1000)%60;
@@ -490,11 +637,11 @@ void renderTimerScreen(){
   if(currentState==STATE_TIMER_EDIT){
     writeRow(0,"Timer > Edit");
     if(millis()-lastBlink>500){ blinkState=!blinkState; lastBlink=millis(); }
-    int h=TimerFeature::hours(); int m=TimerFeature::minutes(); int s=TimerFeature::seconds();
+    int h=timerHours; int m=timerMinutes; int s=timerSeconds;
     if(!blinkState){
-      if(TimerFeature::editField()==EDIT_HOURS) h=-1;
-      if(TimerFeature::editField()==EDIT_MINUTES) m=-1;
-      if(TimerFeature::editField()==EDIT_SECONDS) s=-1;
+      if(timerEditField==EDIT_HOURS) h=-1;
+      if(timerEditField==EDIT_MINUTES) m=-1;
+      if(timerEditField==EDIT_SECONDS) s=-1;
     }
     char hbuf[3], mbuf[3], sbuf[3];
     if(h<0) strcpy(hbuf,"  "); else snprintf(hbuf,3,"%02d",h);
@@ -505,17 +652,30 @@ void renderTimerScreen(){
     return;
   }
 
-  if(TimerFeature::isRunning()){
+  if(timerRunning){
     if(millis()-lastBlink>500){ blinkState=!blinkState; lastBlink=millis(); }
     if(blinkState) writeRow(0,"Timer Running"); else writeRow(0,"Timer        ");
   } else {
-    if(TimerFeature::remainingMillis(millis())==TimerFeature::totalMillis()) writeRow(0,"Timer"); else writeRow(0,"Timer Paused");
+    if(timerRemainingMillis==timerTotalMillis) writeRow(0,"Timer"); else writeRow(0,"Timer Paused");
   }
 }
 
 void updateTimer(){
   if(currentState==STATE_TIMER_ALARM) return;
-  unsigned long remaining = TimerFeature::remainingMillis(millis());
+  unsigned long remaining;
+  if(timerRunning){
+    if(millis()>=timerEndTime){
+      timerRunning=false;
+      timerRemainingMillis=0;
+      enterState(STATE_TIMER_ALARM);
+      currentLedState = LED_TIMER_ALARM;
+      alarmStartTime=millis();
+      return;
+    }
+    remaining=timerEndTime-millis();
+  } else {
+    remaining=timerRemainingMillis;
+  }
   if(currentState!=STATE_TIMER_EDIT){
     int h=remaining/3600000;
     int m=(remaining/60000)%60;
@@ -530,13 +690,13 @@ void updateTimer(){
 
 void renderStopwatchScreen(){
   writeRow(0,"Stopwatch");
-  if(!StopwatchFeature::isRunning() && StopwatchFeature::elapsed()==0) writeRow(1,"00:00.00");
-  else if(!StopwatchFeature::isRunning()) writeRow(1,"Paused");
+  if(!stopwatchRunning && stopwatchElapsed==0) writeRow(1,"00:00.00");
+  else if(!stopwatchRunning) writeRow(1,"Paused");
 }
 
 void updateStopwatch(){
-  StopwatchFeature::update(millis());
-  unsigned long t=StopwatchFeature::elapsed();
+  if(stopwatchRunning) stopwatchElapsed = (unsigned long)(millis() - stopwatchStartTime);
+  unsigned long t=stopwatchElapsed;
   int minutes=(t/60000)%60;
   int seconds=(t/1000)%60;
   int ms=(t%1000)/10;
@@ -545,35 +705,136 @@ void updateStopwatch(){
   writeRow(1,buf);
 }
 
-// ================= REMINDERS =================
+// ================= REMINDERS (UI + Engine) =================
+
+struct Reminder { uint8_t hour; uint8_t minute; bool active; };
+constexpr uint8_t MAX_REMINDERS = 5;
+Reminder reminders[MAX_REMINDERS];
+
+uint8_t reminderIndex = 0;
+
+// field selection
+enum ReminderEditField { REM_EDIT_HOUR, REM_EDIT_MINUTE };
+ReminderEditField reminderField = REM_EDIT_HOUR;
+
+// alarm engine
+uint8_t activeReminder = 255;
+unsigned long reminderAlarmStart = 0;
+unsigned long lastReminderBeep = 0;
+uint8_t reminderBeepStage = 0;
+uint32_t lastReminderTriggerStamp = 0xFFFFFFFF;
+
+void saveReminders(){
+  for(uint8_t i=0;i<MAX_REMINDERS;i++){
+    char key[6];
+    snprintf(key,sizeof(key),"r%dh",i);
+    prefs.putUChar(key, reminders[i].hour);
+    snprintf(key,sizeof(key),"r%dm",i);
+    prefs.putUChar(key, reminders[i].minute);
+    snprintf(key,sizeof(key),"r%da",i);
+    prefs.putBool(key, reminders[i].active);
+  }
+}
+
+void loadReminders(){
+  for(uint8_t i=0;i<MAX_REMINDERS;i++){
+    char key[6];
+    snprintf(key,sizeof(key),"r%dh",i);
+    reminders[i].hour = prefs.getUChar(key, 8); // default 08:00
+    snprintf(key,sizeof(key),"r%dm",i);
+    reminders[i].minute = prefs.getUChar(key, 0);
+    snprintf(key,sizeof(key),"r%da",i);
+    reminders[i].active = prefs.getBool(key, false);
+  }
+}
 
 void startReminderAlarm(uint8_t idx){
   resumeStateAfterReminder = currentState;
-  NeoPixelDriver::setState(LED_REMINDER_ALARM);
-  RemindersFeature::startAlarm(idx);
+  currentLedState = LED_REMINDER_ALARM;
+  activeReminder = idx;
+  reminderAlarmStart = millis();
+  reminderBeepStage = 0;
+  lastReminderBeep = 0;
   enterState(STATE_REMINDER_ALARM);
 }
 
 void stopReminderAlarm(){
-  NeoPixelDriver::setState(LED_IDLE);
-  RemindersFeature::stopAlarm();
+  currentLedState = LED_IDLE;
   enterState(resumeStateAfterReminder);
 }
 
 void checkReminders(){
-  RemindersFeature::check(currentState==STATE_REMINDER_ALARM);
+  DateTime now = rtc.now();
+  uint32_t minuteStamp = (uint32_t)now.day() * 1440UL + (uint32_t)now.hour() * 60UL + now.minute();
+  if(minuteStamp == lastReminderTriggerStamp) return;
+  for(uint8_t i=0;i<MAX_REMINDERS;i++){
+    if(!reminders[i].active) continue;
+    if(now.hour()==reminders[i].hour && now.minute()==reminders[i].minute){
+      lastReminderTriggerStamp = minuteStamp;
+      startReminderAlarm(i);
+      break;
+    }
+  }
 }
 
+// alarm pattern: 3 short beeps, pause, repeat up to 1 minute or until button
 void updateReminderAlarm(){
   if(currentState!=STATE_REMINDER_ALARM) return;
-  RemindersFeature::updateAlarm();
+  unsigned long now = millis();
+  if(now - reminderAlarmStart > 60000){
+    stopReminderAlarm();
+    return;
+  }
 
+  // produce grouped pattern: 3 short beeps (80ms) separated by 120ms, then 400ms pause
+  if(now - lastReminderBeep > 120){
+    // beep on stages 0,2,4 (we'll map)
+    uint8_t stage = reminderBeepStage % 8;
+    if(stage==0 || stage==2 || stage==4){
+      triggerBeep(80);
+    }
+    reminderBeepStage++;
+    if(reminderBeepStage >= 8){
+      reminderBeepStage = 0;
+      lastReminderBeep = now + 400; // extra pause
+    } else {
+      lastReminderBeep = now;
+    }
+  }
+
+  // display alarm screen
   char buf0[17];
-  snprintf(buf0,sizeof(buf0),"Reminder %d",RemindersFeature::activeAlarmIndex()+1);
+  snprintf(buf0,sizeof(buf0),"Reminder %d",activeReminder+1);
   char buf1[17];
-  snprintf(buf1,sizeof(buf1),"%02d:%02d", RemindersFeature::activeAlarmHour(), RemindersFeature::activeAlarmMinute());
+  snprintf(buf1,sizeof(buf1),"%02d:%02d", reminders[activeReminder].hour, reminders[activeReminder].minute);
   writeRow(0,buf0);
   writeRow(1,buf1);
+}
+
+bool getNextReminder(uint8_t &h, uint8_t &m){
+  DateTime now = rtc.now();
+
+  int nowMinutes = now.hour()*60 + now.minute();
+  int bestDiff = 1440; // max minutes in a day
+  bool found = false;
+
+  for(uint8_t i=0;i<MAX_REMINDERS;i++){
+    if(!reminders[i].active) continue;
+
+    int remMinutes = reminders[i].hour*60 + reminders[i].minute;
+    int diff = remMinutes - nowMinutes;
+
+    if(diff < 0) diff += 1440; // wrap to tomorrow
+
+    if(diff < bestDiff){
+      bestDiff = diff;
+      h = reminders[i].hour;
+      m = reminders[i].minute;
+      found = true;
+    }
+  }
+
+  return found;
 }
 
 void renderRemindersScreen(){
@@ -581,7 +842,7 @@ void renderRemindersScreen(){
     writeRow(0,"Reminders");
 
   uint8_t h,m;
-  if(RemindersFeature::getNext(h,m)){
+  if(getNextReminder(h,m)){
     char buf[17];
 
     int displayHour = h;
@@ -602,14 +863,14 @@ void renderRemindersScreen(){
 
   if(currentState == STATE_REMINDER_LIST){
     char top[17];
-    snprintf(top,sizeof(top),"Rem %d/%d %s", RemindersFeature::selectedIndex()+1, RemindersFeature::MAX_REMINDERS, RemindersFeature::selectedActive() ? "ON ":"OFF");
+    snprintf(top,sizeof(top),"Rem %d/%d %s", reminderIndex+1, MAX_REMINDERS, reminders[reminderIndex].active ? "ON ":"OFF");
     writeRow(0, top);
-    if(!RemindersFeature::selectedActive()){
+    if(!reminders[reminderIndex].active){
       writeRow(1,"Empty");
       return;
     }
     char buf[17];
-    snprintf(buf,sizeof(buf),"%02d:%02d", RemindersFeature::selectedHour(), RemindersFeature::selectedMinute());
+    snprintf(buf,sizeof(buf),"%02d:%02d", reminders[reminderIndex].hour, reminders[reminderIndex].minute);
     writeRow(1, buf);
     return;
   }
@@ -617,22 +878,22 @@ void renderRemindersScreen(){
   if(currentState == STATE_REMINDER_EDIT){
     writeRow(0,"Edit Reminder");
     if(millis()-lastBlink>500){ blinkState=!blinkState; lastBlink=millis(); }
-    int rawHour = RemindersFeature::selectedHour();
+    int rawHour = reminders[reminderIndex].hour;
     int h = rawHour;
-    int m = RemindersFeature::selectedMinute();
+    int m = reminders[reminderIndex].minute;
 
     if(!deviceSettings.format24){
      if(h == 0) h = 12;
      else if(h > 12) h -= 12;
 }
     if(!blinkState){
-      if(RemindersFeature::editField()==REM_EDIT_HOUR) h=-1; else m=-1;
+      if(reminderField==REM_EDIT_HOUR) h=-1; else m=-1;
     }
     char hbuf[3]; char mbuf[3];
     if(h<0) strcpy(hbuf,"  "); else snprintf(hbuf,3,"%02d",h);
     if(m<0) strcpy(mbuf,"  "); else snprintf(mbuf,3,"%02d",m);
     char buf[17];
-    snprintf(buf,sizeof(buf),"%s:%s %s", hbuf, mbuf, RemindersFeature::selectedActive() ? "ON":"OFF");
+    snprintf(buf,sizeof(buf),"%s:%s %s", hbuf, mbuf, reminders[reminderIndex].active ? "ON":"OFF");
     writeRow(1, buf);
     return;
   }
@@ -642,22 +903,35 @@ void renderRemindersScreen(){
 
 void initHardware(){
   Serial.begin(115200);
-  LcdDriver::begin();
-  LcdDriver::createBlockChar();
+  Wire.begin(21,22);
+  lcd.init();
+  lcd.backlight();
+  uint8_t block[8]={255,255,255,255,255,255,255,255};
+  lcd.createChar(0,block);
 
-  if(!RtcDriver::begin()){
+  if(!rtc.begin()){
     writeRow(0,"RTC ERROR");
     while(true);
   }
-  if(!RtcDriver::isRunning()){
-    RtcDriver::adjust(DateTime(F(__DATE__), F(__TIME__)));
+  if(!rtc.isrunning()){
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
-  EncoderDriver::begin();
-  BuzzerDriver::begin();
+  pinMode(ENCODER_CLK,INPUT_PULLUP);
+  pinMode(ENCODER_DT,INPUT_PULLUP);
+  pinMode(ENCODER_SW,INPUT_PULLUP);
+  pinMode(BUZZER_PIN,OUTPUT);
 
-  SettingsStore::begin();
-  SettingsStore::loadDeviceSettings(deviceSettings);
+  prefs.begin("desk", false);
+  deviceSettings.buzzer = prefs.getBool("buzzer", true);
+  deviceSettings.quotes = prefs.getBool("quotes", true);
+  deviceSettings.format24 = prefs.getBool("24h", true);
+  deviceSettings.brightness = prefs.getUChar("bright", 1);
+  deviceSettings.autoLights = prefs.getBool("autol", true);
+  deviceSettings.lightsOnHour = prefs.getUChar("lonh", 7);
+  deviceSettings.lightsOnMinute = prefs.getUChar("lonm", 0);
+  deviceSettings.lightsOffHour = prefs.getUChar("loffh", 22);
+  deviceSettings.lightsOffMinute = prefs.getUChar("loffm", 0);
   if(deviceSettings.lightsOnHour > 23) deviceSettings.lightsOnHour = 7;
   if(deviceSettings.lightsOnMinute > 59) deviceSettings.lightsOnMinute = 0;
   if(deviceSettings.lightsOffHour > 23) deviceSettings.lightsOffHour = 22;
@@ -665,26 +939,187 @@ void initHardware(){
   updateLightScheduleState();
   applyBacklightSetting();
 
-  RemindersFeature::load();
+  loadReminders();
   randomSeed(esp_random());
 
+  deviceSettings.ledBrightness = prefs.getUChar("ledb", 6);
   if(deviceSettings.ledBrightness > 10) deviceSettings.ledBrightness = 6;
+  pixels.begin();
+  pixels.setBrightness(deviceSettings.ledBrightness * 25.5); // scale 0-10 to 0-255
+  pixels.clear();
+  deviceSettings.idlePreset = prefs.getUChar("ledmode", 1);
   if(deviceSettings.idlePreset > IDLE_PULSE) deviceSettings.idlePreset = IDLE_STATIC;
-  NeoPixelDriver::begin(deviceSettings.ledBrightness, deviceSettings.idlePreset);
+  idlePreset = (LedIdlePreset)deviceSettings.idlePreset;
+  pixels.show();
 
+}
+
+// ================= INPUT ENGINE =================
+
+InputEvent readInput(){
+  int movement=readEncoder();
+  if(movement>0) return EVENT_ROTATE_CW;
+  if(movement<0) return EVENT_ROTATE_CCW;
+
+  bool pressed = digitalRead(ENCODER_SW)==LOW;
+  unsigned long now = millis();
+
+  if(pressed && !buttonDown){
+    buttonDown=true;
+    buttonDownTime=now;
+  }
+
+  if(!pressed && buttonDown){
+    unsigned long duration=now-buttonDownTime;
+    buttonDown=false;
+    if(duration>LONG_PRESS) return EVENT_LONG_PRESS;
+
+    if(singlePressWaiting && (now-singlePressTime<DOUBLE_PRESS_TIME)){
+      singlePressWaiting=false;
+      return EVENT_DOUBLE_CLICK;
+    }
+    singlePressWaiting=true;
+    singlePressTime=now;
+  }
+
+  if(singlePressWaiting && (now-singlePressTime>DOUBLE_PRESS_TIME)){
+    singlePressWaiting=false;
+    return EVENT_CLICK;
+  }
+
+  return EVENT_NONE;
+}
+
+
+// ================= LED UPDATE =================
+
+void updateLEDs(){
+  static unsigned long lastUpdate = 0;
+  static bool toggle = false;
+
+  if(millis() - lastUpdate < 30) return;
+  lastUpdate = millis();
+  toggle = !toggle;
+
+  switch(currentLedState){
+
+case LED_IDLE:
+
+  if(!lightsAllowedNow()){
+    pixels.clear();
+    break;
+  }
+
+  switch(idlePreset){
+
+    case IDLE_OFF:
+      pixels.clear();
+      break;
+
+    case IDLE_STATIC:
+      pixels.fill(pixels.Color(30,0,20));
+      break;
+
+    case IDLE_BREATH: {
+      static float phase = 0.0;
+      static uint16_t baseHue = 0;
+
+      phase += 0.06;  // breathing speed
+
+      // Wrap phase cleanly
+      if(phase > TWO_PI){
+        phase -= TWO_PI;
+        baseHue += 1800;  
+      }
+
+      // Smooth breathing wave
+      float wave = (sin(phase) + 1.0) * 0.5;
+
+      // set minimum brightness (0.1 = 10%, tweak this)
+      float minLevel = 0.15;
+
+      // scale wave to never reach 0
+      float adjusted = minLevel + (1.0 - minLevel) * wave;
+
+      // gamma correction
+      float corrected = pow(adjusted, 2.2);
+
+      uint8_t level = corrected * deviceSettings.ledBrightness * 25.5;
+
+      // Brightness level
+      uint8_t brightness = corrected * 255;
+
+      // Generate color using HSV
+      uint32_t color = pixels.ColorHSV(baseHue);
+
+      // Apply brightness manually (important)
+      uint8_t r = ((color >> 16) & 0xFF) * brightness / 255;
+      uint8_t g = ((color >> 8) & 0xFF) * brightness / 255;
+      uint8_t b = (color & 0xFF) * brightness / 255;
+
+      pixels.fill(pixels.Color(r, g, b));
+      break;
+      }
+
+    case IDLE_RAINBOW: {
+      static uint16_t hue = 0;
+      hue += 256;
+
+      for(int i=0;i<LED_COUNT;i++){
+        pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(hue + (i * 65536L / LED_COUNT))));
+      }
+      break;
+    }
+
+    case IDLE_PULSE: {
+      static float phase = 0.0;
+      phase += 0.05;  // speed (lower = slower, smoother)
+      float wave = (sin(phase) + 1.0) * 0.5;  // 0 to 1 smooth
+      // Gamma correction (THIS is what makes it feel premium)
+      float corrected = pow(wave, 2.2);
+      // Scale to brightness (respects your global LED brightness)
+      uint8_t level = corrected * deviceSettings.ledBrightness * 25.5;
+      // Your color tone (tweakable)
+      uint8_t r = level / 4;
+      uint8_t g = 0;
+      uint8_t b = level / 6;
+      pixels.fill(pixels.Color(r, g, b));
+      break;  
+    }
+  }
+
+  break;
+    case LED_TIMER_ALARM:
+      if(toggle) pixels.fill(pixels.Color(255,0,0));
+      else pixels.clear();
+      break;
+
+    case LED_REMINDER_ALARM:
+      if(toggle) pixels.fill(pixels.Color(255,80,0));
+      else pixels.clear();
+      break;
+
+    case LED_SUCCESS:
+      pixels.fill(pixels.Color(0,255,0));
+      break;
+  }
+
+  pixels.show();
 }
 
 // ================= SETUP =================
 
 void setup(){
   initHardware();
-  TimerFeature::begin();
+  timerTotalMillis=((unsigned long)timerHours*3600UL+(unsigned long)timerMinutes*60UL+(unsigned long)timerSeconds)*1000UL;
+  if(timerTotalMillis==0) timerTotalMillis=1000;
+  timerRemainingMillis=timerTotalMillis;
 
-  while(!bootAnimation()){ BuzzerDriver::update(); }
+  while(!bootAnimation()){ updateBuzzer(); }
 
   currentQuoteIdx=pickQuote();
   loadQuote();
-  LcdDriver::clear();
+  lcd.clear();
 }
 
 // Helper: days in month
@@ -700,12 +1135,12 @@ void beginSettingsEdit(){
   resetSettingsEditModes();
 
   if(settingsIndex==9){
-    DateTime n=RtcDriver::now();
+    DateTime n=rtc.now();
     adjustHour=n.hour();
     adjustMinute=n.minute();
   }
   else if(settingsIndex==10){
-    DateTime n=RtcDriver::now();
+    DateTime n=rtc.now();
     adjustYear=n.year();
     adjustMonth=n.month();
     adjustDay=n.day();
@@ -781,14 +1216,15 @@ void adjustSettingsValue(int step){
     if(val < 0) val = IDLE_PULSE;
     if(val > IDLE_PULSE) val = IDLE_OFF;
     deviceSettings.idlePreset = val;
-    NeoPixelDriver::setIdlePreset((LedIdlePreset)val);
+    idlePreset = (LedIdlePreset)val;
   }
   else if(settingsIndex==2){
     int val = deviceSettings.ledBrightness + step;
     if(val < 0) val = 0;
     if(val > 10) val = 10;
     deviceSettings.ledBrightness = val;
-    NeoPixelDriver::setBrightnessLevel(deviceSettings.ledBrightness);
+    pixels.setBrightness(deviceSettings.ledBrightness * 25.5);
+    pixels.show();
   }
   else if(settingsIndex==3){
     deviceSettings.autoLights=!deviceSettings.autoLights;
@@ -821,14 +1257,14 @@ void advanceSettingsField(){
 
 void commitSettingsEdit(){
   if(settingsIndex==9){
-    DateTime current = RtcDriver::now();
-    RtcDriver::adjust(DateTime(current.year(),current.month(),current.day(),adjustHour,adjustMinute,0));
-    cachedTime = RtcDriver::now();
+    DateTime current = rtc.now();
+    rtc.adjust(DateTime(current.year(),current.month(),current.day(),adjustHour,adjustMinute,0));
+    cachedTime = rtc.now();
   }
   else if(settingsIndex==10){
-    DateTime current = RtcDriver::now();
-    RtcDriver::adjust(DateTime(adjustYear,adjustMonth,adjustDay,current.hour(),current.minute(),0));
-    cachedTime = RtcDriver::now();
+    DateTime current = rtc.now();
+    rtc.adjust(DateTime(adjustYear,adjustMonth,adjustDay,current.hour(),current.minute(),0));
+    cachedTime = rtc.now();
   }
 
   saveSettings();
@@ -838,43 +1274,36 @@ void commitSettingsEdit(){
 }
 
 void resetTimerAlarm(bool restoreDuration){
-  NeoPixelDriver::setState(LED_IDLE);
-  TimerFeature::stopAlarm(restoreDuration);
+  currentLedState = LED_IDLE;
+  if(restoreDuration) timerRemainingMillis=timerTotalMillis;
   enterState(STATE_TIMER_VIEW);
 }
 
-void checkTimerDone(){
-  if(currentState==STATE_TIMER_ALARM) return;
-  TimerFeature::checkDone();
-}
+// ================= MAIN LOOP =================
 
-void handleEvent(const AppEvent &event){
-  EventType ev = event.type;
+void loop(){
+  unsigned long now=millis();
+  updateBuzzer();
 
-  switch(ev){
-    case EVENT_TIMER_DONE:
-      NeoPixelDriver::setState(LED_TIMER_ALARM);
-      TimerFeature::startAlarm(millis());
-      enterState(STATE_TIMER_ALARM);
-      return;
-
-    case EVENT_TIMER_ALARM_TIMEOUT:
-      resetTimerAlarm(false);
-      return;
-
-    case EVENT_REMINDER_TRIGGER:
-      startReminderAlarm(event.data);
-      return;
-
-    case EVENT_REMINDER_TIMEOUT:
-      stopReminderAlarm();
-      return;
-
-    default:
-      break;
+  if(now-lastLightScheduleCheck>1000){
+    refreshLightOutputs();
+    lastLightScheduleCheck=now;
   }
 
+  updateLEDs();
+
+  if(currentState==STATE_TIMER_ALARM && now-lastAlarmBeep>1200){
+    triggerBeep(200);
+    lastAlarmBeep=now;
+  }
+  if(currentState==STATE_TIMER_ALARM && now-alarmStartTime>30000){
+    resetTimerAlarm(false);
+  }
+
+  InputEvent ev=readInput();
+
   if(currentState==STATE_REMINDER_ALARM){
+    updateReminderAlarm();
     if(ev==EVENT_CLICK || ev==EVENT_DOUBLE_CLICK || ev==EVENT_LONG_PRESS){
       stopReminderAlarm();
     }
@@ -886,21 +1315,40 @@ void handleEvent(const AppEvent &event){
 
     switch(currentState){
       case STATE_REMINDER_LIST:{
-        RemindersFeature::rotateSelected(step);
+        int newIndex = (int)reminderIndex + step;
+        if(newIndex < 0) newIndex = MAX_REMINDERS - 1;
+        if(newIndex >= MAX_REMINDERS) newIndex = 0;
+        reminderIndex = (uint8_t)newIndex;
         stateChanged = true;
-        if(deviceSettings.buzzer) BuzzerDriver::trigger(20);
+        if(deviceSettings.buzzer) triggerBeep(20);
         break;
       }
 
       case STATE_REMINDER_EDIT:
-        RemindersFeature::adjustSelected(step);
-        RemindersFeature::save();
+        if(reminderField==REM_EDIT_HOUR){
+          int h = (int)reminders[reminderIndex].hour + step;
+          if(h < 0) h = 23;
+          if(h > 23) h = 0;
+          reminders[reminderIndex].hour = (uint8_t)h;
+        } else {
+          int m = (int)reminders[reminderIndex].minute + step;
+          if(m < 0) m = 59;
+          if(m > 59) m = 0;
+          reminders[reminderIndex].minute = (uint8_t)m;
+        }
+        saveReminders(); // persist while editing
         stateChanged = true;
-        if(deviceSettings.buzzer) BuzzerDriver::trigger(20);
+        if(deviceSettings.buzzer) triggerBeep(20);
         break;
 
       case STATE_TIMER_EDIT:
-        TimerFeature::adjustEdit(step);
+        if(timerEditField==EDIT_HOURS) timerHours = constrain(timerHours + step,0,99);
+        else if(timerEditField==EDIT_MINUTES) timerMinutes = constrain(timerMinutes + step,0,59);
+        else timerSeconds = constrain(timerSeconds + step,0,59);
+
+        timerTotalMillis=((unsigned long)timerHours*3600UL+(unsigned long)timerMinutes*60UL+(unsigned long)timerSeconds)*1000UL;
+        if(timerTotalMillis==0) timerTotalMillis=1000;
+        timerRemainingMillis=timerTotalMillis;
         stateChanged = true;
         break;
 
@@ -923,7 +1371,7 @@ void handleEvent(const AppEvent &event){
       case STATE_REMINDER_HOME:
       case STATE_SETTINGS_HOME:
         rotateMainState(step);
-        if(deviceSettings.buzzer) BuzzerDriver::trigger(20);
+        if(deviceSettings.buzzer) triggerBeep(20);
         break;
 
       default:
@@ -939,15 +1387,19 @@ void handleEvent(const AppEvent &event){
         break;
 
       case STATE_TIMER_VIEW:
-        if(TimerFeature::isRunning()){
-          TimerFeature::pause(millis());
+        if(timerRunning){
+          timerRemainingMillis=(millis()>=timerEndTime)?0:timerEndTime-millis();
+          timerRunning=false;
         } else {
-          TimerFeature::start(millis());
+          timerEndTime=millis()+timerRemainingMillis;
+          timerRunning=true;
         }
         break;
 
       case STATE_TIMER_EDIT:
-        TimerFeature::advanceEditField();
+        if(timerEditField==EDIT_HOURS) timerEditField=EDIT_MINUTES;
+        else if(timerEditField==EDIT_MINUTES) timerEditField=EDIT_SECONDS;
+        else timerEditField=EDIT_HOURS;
         stateChanged = true;
         break;
 
@@ -956,7 +1408,8 @@ void handleEvent(const AppEvent &event){
         break;
 
       case STATE_STOPWATCH:
-        StopwatchFeature::toggle(millis());
+        stopwatchRunning=!stopwatchRunning;
+        if(stopwatchRunning) stopwatchStartTime=millis()-stopwatchElapsed;
         break;
 
       case STATE_REMINDER_HOME:
@@ -964,11 +1417,12 @@ void handleEvent(const AppEvent &event){
         break;
 
       case STATE_REMINDER_LIST:
+        reminderField = REM_EDIT_HOUR;
         enterState(STATE_REMINDER_EDIT);
         break;
 
       case STATE_REMINDER_EDIT:
-        RemindersFeature::advanceEditField();
+        reminderField = (reminderField == REM_EDIT_HOUR) ? REM_EDIT_MINUTE : REM_EDIT_HOUR;
         stateChanged = true;
         break;
 
@@ -988,19 +1442,19 @@ void handleEvent(const AppEvent &event){
         break;
     }
 
-    if(deviceSettings.buzzer) BuzzerDriver::trigger(40);
+    if(deviceSettings.buzzer) triggerBeep(40);
   }
 
   if(ev==EVENT_DOUBLE_CLICK){
     switch(currentState){
       case STATE_REMINDER_EDIT:
-        RemindersFeature::save();
+        saveReminders();
         enterState(STATE_REMINDER_LIST);
         break;
 
       case STATE_REMINDER_LIST:
         enterState(STATE_REMINDER_HOME);
-        BuzzerDriver::trigger(80);
+        triggerBeep(80);
         break;
 
       case STATE_SETTINGS_EDIT:
@@ -1018,13 +1472,15 @@ void handleEvent(const AppEvent &event){
       case STATE_TIMER_VIEW:
       case STATE_TIMER_EDIT:
       case STATE_TIMER_ALARM:
-        TimerFeature::reset();
+        timerRunning=false;
+        timerRemainingMillis=timerTotalMillis;
         resetTimerAlarm(false);
         break;
 
       case STATE_STOPWATCH:
-        StopwatchFeature::reset();
-        if(deviceSettings.buzzer) BuzzerDriver::trigger(120);
+        stopwatchRunning=false;
+        stopwatchElapsed=0;
+        if(deviceSettings.buzzer) triggerBeep(120);
         break;
 
       default:
@@ -1035,13 +1491,13 @@ void handleEvent(const AppEvent &event){
   if(ev==EVENT_LONG_PRESS){
     switch(currentState){
       case STATE_REMINDER_LIST:
-        RemindersFeature::toggleSelectedActive();
-        RemindersFeature::save();
+        reminders[reminderIndex].active = !reminders[reminderIndex].active;
+        saveReminders();
         stateChanged = true;
         break;
 
       case STATE_TIMER_VIEW:
-        if(!TimerFeature::isRunning()) enterState(STATE_TIMER_EDIT);
+        if(!timerRunning) enterState(STATE_TIMER_EDIT);
         break;
 
       case STATE_TIMER_EDIT:
@@ -1067,57 +1523,13 @@ void handleEvent(const AppEvent &event){
       default:
         break;
     }
-    if(deviceSettings.buzzer) BuzzerDriver::trigger(120);
+    if(deviceSettings.buzzer) triggerBeep(120);
   }
-}
-
-void processEvents(){
-  AppEvent event;
-  while(dequeueEvent(event)){
-    handleEvent(event);
-  }
-}
-
-// ================= MAIN LOOP =================
-
-void loop(){
-  unsigned long now=millis();
-  BuzzerDriver::update();
-
-  if(now-lastLightScheduleCheck>1000){
-    refreshLightOutputs();
-    lastLightScheduleCheck=now;
-  }
-
-  NeoPixelDriver::update(lightsAllowedNow());
-
-  if(currentState==STATE_TIMER_ALARM && TimerFeature::shouldAlarmBeep(now)){
-    BuzzerDriver::trigger(200);
-  }
-  if(currentState==STATE_TIMER_ALARM && TimerFeature::alarmTimedOut(now)){
-    enqueueEvent(EVENT_TIMER_ALARM_TIMEOUT);
-  }
-
-  checkTimerDone();
-
-  if(now-lastReminderCheck>1000){
-    checkReminders();
-    lastReminderCheck=now;
-  }
-
-  if(currentState==STATE_REMINDER_ALARM){
-    updateReminderAlarm();
-  }
-
-  EventType inputEvent=EncoderDriver::readEvent();
-  if(inputEvent!=EVENT_NONE){
-    enqueueEvent(inputEvent);
-  }
-
-  processEvents();
 
   if(now-lastDisplayRefresh>250 || stateChanged){
-    if(stateChanged){ LcdDriver::clear(); stateChanged=false; }
+    if(stateChanged){ lcd.clear(); memset(lcdBuffer,0,sizeof(lcdBuffer)); stateChanged=false; }
+
+    checkReminders();
 
     switch(currentState){
       case STATE_CLOCK:
