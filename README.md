@@ -1,10 +1,3 @@
----
-
-Author: Neel Indalkar
-Title: DeskDroid
-
----
-
 # DeskDroid
 ## Modular smart desktop assistant built around embedded systems, automation, and integrated desktop utilities.
 [![Static Badge](https://img.shields.io/badge/Version-2.5-green)](https://github.com/Neel-729/DeskDroid)
