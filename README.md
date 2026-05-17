@@ -43,3 +43,21 @@
 | 12v 20A SMPS | Main power supply unit |
 
 ---
+
+## System Goals
+
+### Primary Goals
+- Create a unified desktop utility system
+- Maintain modular expandability
+- Ensure stable power distribution
+- Optimize cable management
+- Build a scalable embedded platform
+
+### Secondary Goals
+- Add IoT capabilities
+- Integrate smart notifications
+- Add automation routines
+- Implement wireless control
+- Improve user interaction systems
+
+---
