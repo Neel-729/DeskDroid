@@ -1,48 +1,45 @@
 # DeskDroid
+## Modular smart desktop assistant built around embedded systems, automation, and integrated desktop utilities.
+[![Static Badge](https://img.shields.io/badge/Version-2.5-green)](https://github.com/Neel-729/DeskDroid)
 
-DeskDroid is an ESP32-powered smart desk companion device featuring a clock, timer, stopwatch, and productivity tools.
+---
+
+## Overview
+### Desk Droid V2.5 is a custom smart desktop platform focused on combining multiple electronics and utility systems into a single modular unit.
+### The project is designed around:
+- Embedded systems engineering
+- Modular hardware integration
+- Smart desktop automation
+- Expandable peripheral ecosystem
+- Real-world product-oriented design
+> ### The goal is to create a functional and scalable desktop companion capable of integrating charging, audio, wireless connectivity, sensors, notifications, and future robotics-oriented expansion.
+
+---
 
 ## Features
 
-- Real Time Clock (DS1307)
-- Timer with editing interface
-- Stopwatch
-- Rotary encoder UI
-- Audible alerts
-- Scrolling philosophy quotes
-- Non-blocking firmware architecture
+- Modular architecture
+- Integrated charging dock
+- Bluetooth speaker system
+- Embedded controller-based design
+- Expandable sensor ecosystem
+- Smart desktop utility platform
+- Future automation support
+- Compact integrated form factor
 
-## Hardware
+---
 
-- ESP32 DevKit V1
-- DS1307 RTC module
-- 16x2 I2C LCD
-- Rotary encoder
-- Buzzer
+## Hardware Stack
+> ### Current
 
-## Pin Configuration
+| Component | Purpose |
+|---|---|
+| ESP32 DevKit V1 | Main microcontroller i.e. system controller |
+| DS1307 RTC | Real-time clock for timekeeping |
+| 16x2 LCD | Displaying system information and UI |
+| Rotary Encoder | User input, menu navigation |
+| Buzzer | Audio alerts and feedback |
+| NeoPixel LEDs | Status indication and asthetics |
+| 12v 20A SMPS | Main power supply unit |
 
-| Component    | Pin |
-|--------------|-----|
-| Encoder CLK  | 32  |
-| Encoder DT   | 33  |
-| Encoder SW   | 25  |
-| Buzzer       | 26  |
-| I2C SDA      | 21  |
-| I2C SCL      | 22  |
-
-## Firmware Architecture
-
-- Event-driven input system
-- Non-blocking design using millis()
-- State-machine UI
-
-## Planned Features (V2)
-
-- Reminder system
-- Settings menu
-- Etc
-
-## License
-
-MIT
+---
