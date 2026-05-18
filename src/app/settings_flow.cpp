@@ -1,8 +1,8 @@
 #include "settings_flow.h"
 
+#include "hardware_requests.h"
 #include "navigation.h"
-#include "../drivers/neopixel_driver.h"
-#include "../drivers/rtc_driver.h"
+#include "../core/time_service.h"
 #include "../features/clock.h"
 #include "../features/lighting.h"
 #include "../utils/date_utils.h"
@@ -88,12 +88,12 @@ void beginEdit(){
   resetEditModes();
 
   if(settingsIndex==9){
-    DateTime n=RtcDriver::now();
+    DateTime n=TimeService::now();
     adjustHour=n.hour();
     adjustMinute=n.minute();
   }
   else if(settingsIndex==10){
-    DateTime n=RtcDriver::now();
+    DateTime n=TimeService::now();
     adjustYear=n.year();
     adjustMonth=n.month();
     adjustDay=n.day();
@@ -169,14 +169,14 @@ void adjustValue(int step){
     if(val < 0) val = IDLE_PULSE;
     if(val > IDLE_PULSE) val = IDLE_OFF;
     deviceSettings.idlePreset = val;
-    NeoPixelDriver::setIdlePreset((LedIdlePreset)val);
+    HardwareRequests::requestIdlePreset((LedIdlePreset)val, CommandSource::SETTINGS);
   }
   else if(settingsIndex==2){
     int val = deviceSettings.ledBrightness + step;
     if(val < 0) val = 0;
     if(val > 10) val = 10;
     deviceSettings.ledBrightness = val;
-    NeoPixelDriver::setBrightnessLevel(deviceSettings.ledBrightness);
+    HardwareRequests::requestLedBrightness(deviceSettings.ledBrightness, CommandSource::SETTINGS);
   }
   else if(settingsIndex==3){
     deviceSettings.autoLights=!deviceSettings.autoLights;
@@ -207,16 +207,16 @@ void advanceField(){
   AppNavigation::markChanged();
 }
 
-void commitEdit(){
+void commitEdit(unsigned long now){
   if(settingsIndex==9){
-    DateTime current = RtcDriver::now();
-    RtcDriver::adjust(DateTime(current.year(),current.month(),current.day(),adjustHour,adjustMinute,0));
-    ClockFeature::syncToRtc();
+    DateTime current = TimeService::now();
+    TimeService::adjust(DateTime(current.year(),current.month(),current.day(),adjustHour,adjustMinute,0));
+    ClockFeature::syncToRtc(now);
   }
   else if(settingsIndex==10){
-    DateTime current = RtcDriver::now();
-    RtcDriver::adjust(DateTime(adjustYear,adjustMonth,adjustDay,current.hour(),current.minute(),0));
-    ClockFeature::syncToRtc();
+    DateTime current = TimeService::now();
+    TimeService::adjust(DateTime(adjustYear,adjustMonth,adjustDay,current.hour(),current.minute(),0));
+    ClockFeature::syncToRtc(now);
   }
 
   save();

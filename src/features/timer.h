@@ -10,7 +10,7 @@ void begin();
 void start(unsigned long now);
 void pause(unsigned long now);
 void reset();
-void checkDone();
+void checkDone(unsigned long now);
 
 bool isRunning();
 unsigned long remainingMillis(unsigned long now);
@@ -29,4 +29,3 @@ void stopAlarm(bool restoreDuration);
 bool shouldAlarmBeep(unsigned long now);
 bool alarmTimedOut(unsigned long now);
 }
-

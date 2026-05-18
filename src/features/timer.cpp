@@ -46,11 +46,11 @@ void reset(){
   timerRemainingMillis=timerTotalMillis;
 }
 
-void checkDone(){
+void checkDone(unsigned long now){
   if(!timerRunning) return;
-  if(millis()<timerEndTime) return;
+  if(now<timerEndTime) return;
 
-  if(enqueueEvent(EVENT_TIMER_DONE)){
+  if(enqueueTimerEvent(EVENT_TIMER_DONE)){
     timerRunning=false;
     timerRemainingMillis=0;
   }
@@ -122,4 +122,3 @@ bool alarmTimedOut(unsigned long now){
 }
 
 }
-

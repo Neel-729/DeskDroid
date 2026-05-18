@@ -1,5 +1,98 @@
+# =========================
+# PlatformIO
+# =========================
 .pio/
-.vscode/
-*.bin
+.piolibdeps/
+.clangd/
+compile_commands.json
+
+# Local PlatformIO settings
+.platformio/
+
+# =========================
+# VSCode
+# =========================
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# =========================
+# Build Artifacts
+# =========================
+*.o
+*.obj
 *.elf
+*.bin
 *.map
+*.hex
+
+# =========================
+# Logs / Diagnostics
+# =========================
+*.log
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Temporary / Backup Files
+# =========================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+
+# =========================
+# Archive Files
+# =========================
+*.zip
+*.rar
+*.7z
+
+# =========================
+# Testing / Coverage
+# =========================
+coverage/
+htmlcov/
+
+# =========================
+# Generated Docs
+# =========================
+docs/build/
+
+# =========================
+# Local Environment Files
+# =========================
+.env
+.env.*
+
+# =========================
+# ESP Crash Dumps / Core Dumps
+# =========================
+core
+core.*
+
+# =========================
+# CMake / Misc Tooling
+# =========================
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+
+# =========================
+# Future Runtime Traces
+# =========================
+trace_dump.*
+runtime_dump.*
+event_trace.*

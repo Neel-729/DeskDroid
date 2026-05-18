@@ -1,11 +1,11 @@
 #include "lighting.h"
 
-#include "../drivers/lcd_driver.h"
-#include "../drivers/rtc_driver.h"
+#include "../core/time_service.h"
 
 namespace {
 
 bool lightScheduleAllowsOutput = true;
+LedState requestedLedState = LED_IDLE;
 
 uint16_t minutesSinceMidnight(uint8_t hour, uint8_t minute){
   return (uint16_t)hour * 60 + minute;
@@ -25,13 +25,33 @@ bool isWithinLightSchedule(const DeviceSettings &settings, const DateTime &now){
 
 namespace LightingFeature {
 
+void begin(const DeviceSettings &settings){
+  requestedLedState = LED_IDLE;
+  refreshSchedule(settings);
+}
+
+void refreshSchedule(const DeviceSettings &settings){
+  lightScheduleAllowsOutput = !settings.autoLights || isWithinLightSchedule(settings, TimeService::now());
+}
+
 void refresh(const DeviceSettings &settings){
-  lightScheduleAllowsOutput = !settings.autoLights || isWithinLightSchedule(settings, RtcDriver::now());
-  LcdDriver::setBacklight(settings.brightness && lightScheduleAllowsOutput);
+  refreshSchedule(settings);
+}
+
+void requestMode(LedState mode){
+  requestedLedState = mode;
+}
+
+LedState requestedMode(){
+  return requestedLedState;
 }
 
 bool allowsOutput(){
   return lightScheduleAllowsOutput;
+}
+
+bool backlightEnabled(const DeviceSettings &settings){
+  return settings.brightness && lightScheduleAllowsOutput;
 }
 
 }

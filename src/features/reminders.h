@@ -25,11 +25,10 @@ uint8_t selectedMinute();
 
 bool getNext(uint8_t &hour, uint8_t &minute);
 
-void startAlarm(uint8_t idx);
+void startAlarm(uint8_t idx, unsigned long now);
 void stopAlarm();
-void updateAlarm();
+bool updateAlarm(unsigned long now);
 uint8_t activeAlarmIndex();
 uint8_t activeAlarmHour();
 uint8_t activeAlarmMinute();
 }
-

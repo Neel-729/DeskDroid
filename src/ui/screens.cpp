@@ -2,15 +2,30 @@
 
 #include <string.h>
 
-#include "../drivers/lcd_driver.h"
-#include "../features/reminders.h"
-#include "../features/stopwatch.h"
-#include "../features/timer.h"
-
 namespace {
 
+char frameRows[2][17] = {
+  "                ",
+  "                "
+};
+
+void writeRow(uint8_t row, const char* text){
+  if(row >= 2) return;
+
+  uint8_t i = 0;
+  while(i < 16 && text[i] != '\0'){
+    frameRows[row][i] = text[i];
+    i++;
+  }
+  while(i < 16){
+    frameRows[row][i] = ' ';
+    i++;
+  }
+  frameRows[row][16] = '\0';
+}
+
 void renderLightScheduleEdit(const char* title, uint8_t hour, uint8_t minute, bool blinkState, bool hourSelected){
-  LcdDriver::writeRow(0,title);
+  writeRow(0,title);
 
   int h=hour;
   int m=minute;
@@ -26,45 +41,55 @@ void renderLightScheduleEdit(const char* title, uint8_t hour, uint8_t minute, bo
 
   char buf[17];
   snprintf(buf,sizeof(buf),"%s:%s",hbuf,mbuf);
-  LcdDriver::writeRow(1,buf);
+  writeRow(1,buf);
 }
 
 }
 
 namespace UiScreens {
 
+const char* row(uint8_t index){
+  if(index >= 2) return "";
+  return frameRows[index];
+}
+
+void clearFrame(){
+  writeRow(0, "");
+  writeRow(1, "");
+}
+
 void renderBootTitle(const char* firmwareVersion){
   char buf[17];
   snprintf(buf,sizeof(buf),"DeskDroid v%s",firmwareVersion);
-  LcdDriver::writeRow(0,buf);
+  writeRow(0,buf);
 }
 
 void renderBootScreen(const char* firmwareVersion, const char* status){
   renderBootTitle(firmwareVersion);
-  LcdDriver::writeRow(1,status);
+  writeRow(1,status);
 }
 
 void renderRtcErrorScreen(){
-  LcdDriver::writeRow(0,"RTC ERROR");
+  writeRow(0,"RTC ERROR");
 }
 
 void renderClockScreen(const char* timeRow, const char* quoteRow){
-  LcdDriver::writeRow(0,timeRow);
-  LcdDriver::writeRow(1,quoteRow);
+  writeRow(0,timeRow);
+  writeRow(1,quoteRow);
 }
 
 void renderSettingsScreen(AppState state, const DeviceSettings &settings, const SettingsFlow::Snapshot &renderState){
   if(state==STATE_SETTINGS_HOME){
-    LcdDriver::writeRow(0,"Settings");
-    LcdDriver::writeRow(1,"Enter");
+    writeRow(0,"Settings");
+    writeRow(1,"Enter");
     return;
   }
 
   if(state==STATE_SETTINGS_MENU){
-    LcdDriver::writeRow(0,"Settings");
+    writeRow(0,"Settings");
     char buf[17];
     snprintf(buf,sizeof(buf),"> %s",renderState.selectedLabel);
-    LcdDriver::writeRow(1,buf);
+    writeRow(1,buf);
     return;
   }
 
@@ -72,28 +97,28 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
 
   switch(renderState.selectedIndex){
     case 0:
-      LcdDriver::writeRow(0,"Backlight");
-      LcdDriver::writeRow(1,settings.brightness?"ON":"OFF");
+      writeRow(0,"Backlight");
+      writeRow(1,settings.brightness?"ON":"OFF");
       break;
 
     case 1:{
       const char* modes[] = {"Off","Static","Breath","Rainbow","Pulse"};
-      LcdDriver::writeRow(0,"LED Mode");
-      LcdDriver::writeRow(1,modes[settings.idlePreset]);
+      writeRow(0,"LED Mode");
+      writeRow(1,modes[settings.idlePreset]);
       break;
     }
 
     case 2:{
       char buf[17];
-      LcdDriver::writeRow(0,"LED Brightness");
+      writeRow(0,"LED Brightness");
       snprintf(buf,sizeof(buf),"Level: %d",settings.ledBrightness);
-      LcdDriver::writeRow(1,buf);
+      writeRow(1,buf);
       break;
     }
 
     case 3:
-      LcdDriver::writeRow(0,"Auto Lights");
-      LcdDriver::writeRow(1,settings.autoLights?"ON":"OFF");
+      writeRow(0,"Auto Lights");
+      writeRow(1,settings.autoLights?"ON":"OFF");
       break;
 
     case 4:
@@ -105,18 +130,18 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
 
     case 6:
-      LcdDriver::writeRow(0,"Buzzer");
-      LcdDriver::writeRow(1,settings.buzzer?"ON":"OFF");
+      writeRow(0,"Buzzer");
+      writeRow(1,settings.buzzer?"ON":"OFF");
       break;
 
     case 7:
-      LcdDriver::writeRow(0,"Quotes");
-      LcdDriver::writeRow(1,settings.quotes?"ON":"OFF");
+      writeRow(0,"Quotes");
+      writeRow(1,settings.quotes?"ON":"OFF");
       break;
 
     case 8:
-      LcdDriver::writeRow(0,"Time Format");
-      LcdDriver::writeRow(1,settings.format24?"24H":"12H");
+      writeRow(0,"Time Format");
+      writeRow(1,settings.format24?"24H":"12H");
       break;
 
     case 9:{
@@ -133,9 +158,9 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       if(m<0) strcpy(mbuf,"  "); else snprintf(mbuf,sizeof(mbuf),"%02d",m);
 
       char buf[17];
-      LcdDriver::writeRow(0,"Adjust Time");
+      writeRow(0,"Adjust Time");
       snprintf(buf,sizeof(buf),"%s:%s",hbuf,mbuf);
-      LcdDriver::writeRow(1,buf);
+      writeRow(1,buf);
       break;
     }
 
@@ -158,42 +183,42 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       if(y<0) strcpy(ybuf,"    "); else snprintf(ybuf,sizeof(ybuf),"%04d",y);
 
       char buf[17];
-      LcdDriver::writeRow(0,"Adjust Date");
+      writeRow(0,"Adjust Date");
       snprintf(buf,sizeof(buf),"%s/%s/%s",dbuf,mbuf,ybuf);
-      LcdDriver::writeRow(1,buf);
+      writeRow(1,buf);
       break;
     }
 
     case 11:
-      LcdDriver::writeRow(0,"DeskDroid");
+      writeRow(0,"DeskDroid");
       char versionBuf[17];
       snprintf(versionBuf,sizeof(versionBuf),"v%s",renderState.firmwareVersion);
-      LcdDriver::writeRow(1,versionBuf);
+      writeRow(1,versionBuf);
       break;
   }
 }
 
-void renderTimerScreen(AppState state, unsigned long now, bool blinkState){
+void renderTimerScreen(AppState state, const TimerScreenData &data, bool blinkState){
   if(state==STATE_TIMER_ALARM){
-    unsigned long total=TimerFeature::totalMillis();
+    unsigned long total=data.totalMillis;
     int h=total/3600000;
     int m=(total/60000)%60;
     int s=(total/1000)%60;
     char buf[17];
-    LcdDriver::writeRow(0,"Timer Finished!");
+    writeRow(0,"Timer Finished!");
     snprintf(buf,sizeof(buf),"%02d:%02d:%02d",h,m,s);
-    LcdDriver::writeRow(1,buf);
+    writeRow(1,buf);
     return;
   }
 
   if(state==STATE_TIMER_EDIT){
-    int h=TimerFeature::hours();
-    int m=TimerFeature::minutes();
-    int s=TimerFeature::seconds();
+    int h=data.hours;
+    int m=data.minutes;
+    int s=data.seconds;
     if(!blinkState){
-      if(TimerFeature::editField()==EDIT_HOURS) h=-1;
-      if(TimerFeature::editField()==EDIT_MINUTES) m=-1;
-      if(TimerFeature::editField()==EDIT_SECONDS) s=-1;
+      if(data.editField==0) h=-1;
+      if(data.editField==1) m=-1;
+      if(data.editField==2) s=-1;
     }
 
     char hbuf[3];
@@ -204,86 +229,84 @@ void renderTimerScreen(AppState state, unsigned long now, bool blinkState){
     if(s<0) strcpy(sbuf,"  "); else snprintf(sbuf,sizeof(sbuf),"%02d",s);
 
     char buf[17];
-    LcdDriver::writeRow(0,"Timer > Edit");
+    writeRow(0,"Timer > Edit");
     snprintf(buf,sizeof(buf),"%s:%s:%s",hbuf,mbuf,sbuf);
-    LcdDriver::writeRow(1,buf);
+    writeRow(1,buf);
     return;
   }
 
-  if(TimerFeature::isRunning()){
-    if(blinkState) LcdDriver::writeRow(0,"Timer Running");
-    else LcdDriver::writeRow(0,"Timer        ");
+  if(data.running){
+    if(blinkState) writeRow(0,"Timer Running");
+    else writeRow(0,"Timer        ");
   } else {
-    if(TimerFeature::remainingMillis(now)==TimerFeature::totalMillis()) LcdDriver::writeRow(0,"Timer");
-    else LcdDriver::writeRow(0,"Timer Paused");
+    if(data.remainingMillis==data.totalMillis) writeRow(0,"Timer");
+    else writeRow(0,"Timer Paused");
   }
 
-  unsigned long remaining = TimerFeature::remainingMillis(now);
+  unsigned long remaining = data.remainingMillis;
   int h=remaining/3600000;
   int m=(remaining/60000)%60;
   int s=(remaining/1000)%60;
   char buf[17];
   snprintf(buf,sizeof(buf),"%02d:%02d:%02d",h,m,s);
-  LcdDriver::writeRow(1,buf);
+  writeRow(1,buf);
 }
 
-void renderStopwatchScreen(){
-  unsigned long t=StopwatchFeature::elapsed();
+void renderStopwatchScreen(const StopwatchScreenData &data){
+  unsigned long t=data.elapsedMillis;
   int minutes=(t/60000)%60;
   int seconds=(t/1000)%60;
   int ms=(t%1000)/10;
   char buf[17];
-  LcdDriver::writeRow(0,"Stopwatch");
+  writeRow(0,"Stopwatch");
   snprintf(buf,sizeof(buf),"%02d:%02d.%02d",minutes,seconds,ms);
-  LcdDriver::writeRow(1,buf);
+  writeRow(1,buf);
 }
 
-void renderRemindersScreen(AppState state, bool format24, bool blinkState){
+void renderRemindersScreen(AppState state, const RemindersScreenData &data, bool format24, bool blinkState){
   if(state == STATE_REMINDER_HOME){
-    uint8_t h,m;
-    LcdDriver::writeRow(0,"Reminders");
+    writeRow(0,"Reminders");
 
-    if(RemindersFeature::getNext(h,m)){
+    if(data.hasNext){
       char buf[17];
-      int displayHour = h;
+      int displayHour = data.nextHour;
       if(!format24){
         if(displayHour == 0) displayHour = 12;
         else if(displayHour > 12) displayHour -= 12;
       }
-      snprintf(buf,sizeof(buf),"Next at %02d:%02d",displayHour,m);
-      LcdDriver::writeRow(1,buf);
+      snprintf(buf,sizeof(buf),"Next at %02d:%02d",displayHour,data.nextMinute);
+      writeRow(1,buf);
     } else {
-      LcdDriver::writeRow(1,"No reminders");
+      writeRow(1,"No reminders");
     }
     return;
   }
 
   if(state == STATE_REMINDER_LIST){
     char top[17];
-    snprintf(top,sizeof(top),"Rem %d/%d %s", RemindersFeature::selectedIndex()+1, RemindersFeature::MAX_REMINDERS, RemindersFeature::selectedActive() ? "ON ":"OFF");
-    LcdDriver::writeRow(0,top);
-    if(!RemindersFeature::selectedActive()){
-      LcdDriver::writeRow(1,"Empty");
+    snprintf(top,sizeof(top),"Rem %d/%d %s", data.selectedIndex+1, data.maxReminders, data.selectedActive ? "ON ":"OFF");
+    writeRow(0,top);
+    if(!data.selectedActive){
+      writeRow(1,"Empty");
       return;
     }
 
     char buf[17];
-    snprintf(buf,sizeof(buf),"%02d:%02d", RemindersFeature::selectedHour(), RemindersFeature::selectedMinute());
-    LcdDriver::writeRow(1,buf);
+    snprintf(buf,sizeof(buf),"%02d:%02d", data.selectedHour, data.selectedMinute);
+    writeRow(1,buf);
     return;
   }
 
   if(state == STATE_REMINDER_EDIT){
-    int rawHour = RemindersFeature::selectedHour();
-    int h = rawHour;
-    int m = RemindersFeature::selectedMinute();
+    int h = data.selectedHour;
+    int m = data.selectedMinute;
 
     if(!format24){
       if(h == 0) h = 12;
       else if(h > 12) h -= 12;
     }
     if(!blinkState){
-      if(RemindersFeature::editField()==REM_EDIT_HOUR) h=-1;
+      if(data.editField==0) h=-1;
       else m=-1;
     }
 
@@ -293,19 +316,19 @@ void renderRemindersScreen(AppState state, bool format24, bool blinkState){
     if(m<0) strcpy(mbuf,"  "); else snprintf(mbuf,sizeof(mbuf),"%02d",m);
 
     char buf[17];
-    LcdDriver::writeRow(0,"Edit Reminder");
-    snprintf(buf,sizeof(buf),"%s:%s %s", hbuf, mbuf, RemindersFeature::selectedActive() ? "ON":"OFF");
-    LcdDriver::writeRow(1,buf);
+    writeRow(0,"Edit Reminder");
+    snprintf(buf,sizeof(buf),"%s:%s %s", hbuf, mbuf, data.selectedActive ? "ON":"OFF");
+    writeRow(1,buf);
   }
 }
 
-void renderReminderAlarmScreen(){
+void renderReminderAlarmScreen(const RemindersScreenData &data){
   char buf0[17];
   char buf1[17];
-  snprintf(buf0,sizeof(buf0),"Reminder %d",RemindersFeature::activeAlarmIndex()+1);
-  snprintf(buf1,sizeof(buf1),"%02d:%02d",RemindersFeature::activeAlarmHour(),RemindersFeature::activeAlarmMinute());
-  LcdDriver::writeRow(0,buf0);
-  LcdDriver::writeRow(1,buf1);
+  snprintf(buf0,sizeof(buf0),"Reminder %d",data.activeAlarmIndex+1);
+  snprintf(buf1,sizeof(buf1),"%02d:%02d",data.activeAlarmHour,data.activeAlarmMinute);
+  writeRow(0,buf0);
+  writeRow(1,buf1);
 }
 
 }

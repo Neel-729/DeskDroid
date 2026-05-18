@@ -35,7 +35,7 @@ void rotateMenu(int step);
 void beginEdit();
 void adjustValue(int step);
 void advanceField();
-void commitEdit();
+void commitEdit(unsigned long now);
 void leaveMenu();
 void exitToClock();
 

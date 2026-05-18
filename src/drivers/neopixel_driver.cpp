@@ -43,11 +43,8 @@ void setBrightnessLevel(uint8_t level){
 }
 
 void update(bool lightsAllowed){
-  static unsigned long lastUpdate = 0;
   static bool toggle = false;
 
-  if(millis() - lastUpdate < 30) return;
-  lastUpdate = millis();
   toggle = !toggle;
 
   switch(currentLedState){
@@ -135,4 +132,3 @@ void update(bool lightsAllowed){
 }
 
 }
-

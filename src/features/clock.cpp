@@ -4,7 +4,7 @@
 #include <pgmspace.h>
 #include <string.h>
 
-#include "../drivers/rtc_driver.h"
+#include "../core/time_service.h"
 
 namespace {
 
@@ -103,7 +103,7 @@ void updateQuote(unsigned long now, bool quotesEnabled){
 
 void updateTime(unsigned long now, bool format24){
   if(now-lastRtcUpdate>1000){
-    cachedTime=RtcDriver::now();
+    cachedTime=TimeService::now();
     lastRtcUpdate=now;
   }
 
@@ -126,14 +126,14 @@ void updateTime(unsigned long now, bool format24){
 
 namespace ClockFeature {
 
-void begin(){
+void begin(unsigned long now){
   currentQuoteIdx=pickQuote();
-  loadQuote(millis());
+  loadQuote(now);
 }
 
-void nextQuote(){
+void nextQuote(unsigned long now){
   currentQuoteIdx=pickQuote();
-  loadQuote(millis());
+  loadQuote(now);
 }
 
 void update(unsigned long now, bool quotesEnabled, bool format24){
@@ -141,9 +141,9 @@ void update(unsigned long now, bool quotesEnabled, bool format24){
   updateQuote(now, quotesEnabled);
 }
 
-void syncToRtc(){
-  cachedTime=RtcDriver::now();
-  lastRtcUpdate=millis();
+void syncToRtc(unsigned long now){
+  cachedTime=TimeService::now();
+  lastRtcUpdate=now;
 }
 
 const char* timeRow(){

@@ -3,16 +3,16 @@
 #include <esp_system.h>
 #include <Arduino.h>
 
+#include "hardware_requests.h"
+#include "input_service.h"
 #include "navigation.h"
 #include "settings_flow.h"
+#include "system_context.h"
 #include "../core/events.h"
+#include "../core/logging.h"
+#include "../core/scheduler.h"
 #include "../core/settings_store.h"
-#include "../core/timing.h"
-#include "../drivers/buzzer_driver.h"
-#include "../drivers/encoder_driver.h"
-#include "../drivers/lcd_driver.h"
-#include "../drivers/neopixel_driver.h"
-#include "../drivers/rtc_driver.h"
+#include "../core/time_service.h"
 #include "../features/clock.h"
 #include "../features/lighting.h"
 #include "../features/reminders.h"
@@ -24,14 +24,41 @@ namespace {
 
 constexpr const char* FIRMWARE_VERSION = "2.5";
 
-unsigned long lastDisplayRefresh = 0;
-unsigned long lastLightScheduleCheck = 0;
-unsigned long lastReminderCheck = 0;
+SystemContext systemContext;
 
-bool blinkState = true;
-unsigned long lastBlink = 0;
+void runBuzzerTask(FrameContext &context);
+void runHardwareRequestTask(FrameContext &context);
+void runLightingTask(FrameContext &context);
+void runLedTask(FrameContext &context);
+void runTimerTask(FrameContext &context);
+void runReminderCheckTask(FrameContext &context);
+void runReminderAlarmTask(FrameContext &context);
+void runInputTask(FrameContext &context);
+void runEventTask(FrameContext &context);
+void runUiTask(FrameContext &context);
+void runDiagnosticsTask(FrameContext &context);
+void flushUiFrame();
+UiScreens::TimerScreenData timerScreenData(unsigned long now);
+UiScreens::StopwatchScreenData stopwatchScreenData();
+UiScreens::RemindersScreenData remindersScreenData();
 
-bool bootAnimation(){
+ScheduledTask scheduledTasks[] = {
+  { "buzzer", 5, 0, 0, 250, 0, 0, true, runBuzzerTask },
+  { "hardware", 0, 0, 0, 1500, 0, 0, true, runHardwareRequestTask },
+  { "lighting", 1000, 0, 0, 1500, 0, 0, true, runLightingTask },
+  { "led", 30, 0, 0, 7000, 0, 0, true, runLedTask },
+  { "timer", 50, 0, 0, 1000, 0, 0, true, runTimerTask },
+  { "reminder-check", 1000, 0, 0, 2500, 0, 0, true, runReminderCheckTask },
+  { "reminder-alarm", 50, 0, 0, 1000, 0, 0, true, runReminderAlarmTask },
+  { "input", 10, 0, 0, 1000, 0, 0, true, runInputTask },
+  { "events", 0, 0, 0, 2500, 0, 0, true, runEventTask },
+  { "ui", 50, 0, 0, 12000, 0, 0, true, runUiTask },
+  { "diagnostics", 30000, 0, 0, 4000, 0, 0, true, runDiagnosticsTask }
+};
+
+Scheduler scheduler(scheduledTasks, sizeof(scheduledTasks) / sizeof(scheduledTasks[0]));
+
+bool bootAnimation(unsigned long now){
   static uint8_t stage=0;
   static unsigned long lastStep=0;
 
@@ -41,17 +68,19 @@ bool bootAnimation(){
 
   if(stage==0){
     UiScreens::renderBootTitle(FIRMWARE_VERSION);
-    BuzzerDriver::trigger();
-    lastStep=millis();
+    HardwareRequests::requestBeep(50, CommandSource::SYSTEM);
+    HardwareRequests::executePending();
+    lastStep=now;
     stage=1;
   }
 
   if(stage>=1 && stage<=8){
-    if(millis()-lastStep>150){
+    if(now-lastStep>150){
       UiScreens::renderBootScreen(FIRMWARE_VERSION, frames[stage-1]);
-      lastStep=millis();
-      if(stage==6) BuzzerDriver::trigger(50);
-      if(stage==8) BuzzerDriver::trigger(50);
+      lastStep=now;
+      if(stage==6) HardwareRequests::requestBeep(50, CommandSource::SYSTEM);
+      if(stage==8) HardwareRequests::requestBeep(50, CommandSource::SYSTEM);
+      HardwareRequests::executePending();
       stage++;
     }
   }
@@ -65,28 +94,27 @@ bool bootAnimation(){
 
 void initHardware(){
   Serial.begin(115200);
-  LcdDriver::begin();
-  LcdDriver::createBlockChar();
-
-  if(!RtcDriver::begin()){
-    UiScreens::renderRtcErrorScreen();
-    while(true);
-  }
-  if(!RtcDriver::isRunning()){
-    RtcDriver::adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
-
-  EncoderDriver::begin();
-  BuzzerDriver::begin();
-
   SettingsStore::begin();
   SettingsFlow::begin();
-  LightingFeature::refresh(SettingsFlow::settings());
+  HardwareRequests::beginLocal(SettingsFlow::settings());
+
+  if(!TimeService::begin()){
+    UiScreens::renderRtcErrorScreen();
+    flushUiFrame();
+    while(true);
+  }
+  if(!TimeService::isRunning()){
+    TimeService::adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  InputService::begin();
+  LightingFeature::begin(SettingsFlow::settings());
+  HardwareRequests::requestBacklight(LightingFeature::backlightEnabled(SettingsFlow::settings()), CommandSource::SYSTEM);
+  HardwareRequests::executePending();
 
   RemindersFeature::load();
   randomSeed(esp_random());
 
-  NeoPixelDriver::begin(SettingsFlow::settings().ledBrightness, SettingsFlow::settings().idlePreset);
 }
 
 bool shouldBlinkCurrentScreen(){
@@ -99,23 +127,23 @@ bool shouldBlinkCurrentScreen(){
 
 void updateBlinkState(unsigned long now){
   if(!shouldBlinkCurrentScreen()) return;
-  if(now-lastBlink>500){
-    blinkState=!blinkState;
-    lastBlink=now;
+  if(now-systemContext.ui.lastBlinkMs>500){
+    systemContext.ui.blinkState=!systemContext.ui.blinkState;
+    systemContext.ui.lastBlinkMs=now;
   }
 }
 
-void startReminderAlarm(uint8_t idx){
+void startReminderAlarm(uint8_t idx, unsigned long now){
   AppNavigation::setResumeAfterReminder(AppNavigation::current());
-  NeoPixelDriver::setState(LED_REMINDER_ALARM);
-  RemindersFeature::startAlarm(idx);
+  LightingFeature::requestMode(LED_REMINDER_ALARM);
+  RemindersFeature::startAlarm(idx, now);
   AppNavigation::enter(STATE_REMINDER_ALARM);
 }
 
 void stopReminderAlarm(){
   AppState resumeState = AppNavigation::resumeAfterReminder();
   RemindersFeature::stopAlarm();
-  NeoPixelDriver::setState(resumeState==STATE_TIMER_ALARM ? LED_TIMER_ALARM : LED_IDLE);
+  LightingFeature::requestMode(resumeState==STATE_TIMER_ALARM ? LED_TIMER_ALARM : LED_IDLE);
   AppNavigation::enter(resumeState);
 }
 
@@ -123,30 +151,32 @@ void checkReminders(){
   RemindersFeature::check(AppNavigation::current()==STATE_REMINDER_ALARM);
 }
 
-void updateReminderAlarm(){
+void updateReminderAlarm(unsigned long now){
   if(AppNavigation::current()!=STATE_REMINDER_ALARM) return;
-  RemindersFeature::updateAlarm();
+  if(RemindersFeature::updateAlarm(now)){
+    HardwareRequests::requestBeep(80, CommandSource::REMINDER);
+  }
 }
 
 void resetTimerAlarm(bool restoreDuration){
-  NeoPixelDriver::setState(LED_IDLE);
+  LightingFeature::requestMode(LED_IDLE);
   TimerFeature::stopAlarm(restoreDuration);
   AppNavigation::enter(STATE_TIMER_VIEW);
 }
 
-void checkTimerDone(){
+void checkTimerDone(unsigned long now){
   if(AppNavigation::current()==STATE_TIMER_ALARM) return;
-  TimerFeature::checkDone();
+  TimerFeature::checkDone(now);
 }
 
-void handleEvent(const AppEvent &event){
+void handleEvent(const AppEvent &event, unsigned long now){
   EventType ev = event.type;
   DeviceSettings &settings = SettingsFlow::settings();
 
   switch(ev){
     case EVENT_TIMER_DONE:
-      NeoPixelDriver::setState(LED_TIMER_ALARM);
-      TimerFeature::startAlarm(millis());
+      LightingFeature::requestMode(LED_TIMER_ALARM);
+      TimerFeature::startAlarm(now);
       AppNavigation::enter(STATE_TIMER_ALARM);
       return;
 
@@ -155,7 +185,7 @@ void handleEvent(const AppEvent &event){
       return;
 
     case EVENT_REMINDER_TRIGGER:
-      startReminderAlarm(event.data);
+      startReminderAlarm(event.payload.reminder.index, now);
       return;
 
     case EVENT_REMINDER_TIMEOUT:
@@ -174,20 +204,21 @@ void handleEvent(const AppEvent &event){
   }
 
   if(ev==EVENT_ROTATE_CW || ev==EVENT_ROTATE_CCW){
-    int step = (ev==EVENT_ROTATE_CW)?1:-1;
+    int step = event.payload.encoder.direction;
+    if(step == 0) step = (ev==EVENT_ROTATE_CW)?1:-1;
 
     switch(AppNavigation::current()){
       case STATE_REMINDER_LIST:
         RemindersFeature::rotateSelected(step);
         AppNavigation::markChanged();
-        if(settings.buzzer) BuzzerDriver::trigger(20);
+        if(settings.buzzer) HardwareRequests::requestBeep(20, CommandSource::INPUTS);
         break;
 
       case STATE_REMINDER_EDIT:
         RemindersFeature::adjustSelected(step);
         RemindersFeature::save();
         AppNavigation::markChanged();
-        if(settings.buzzer) BuzzerDriver::trigger(20);
+        if(settings.buzzer) HardwareRequests::requestBeep(20, CommandSource::INPUTS);
         break;
 
       case STATE_TIMER_EDIT:
@@ -209,7 +240,7 @@ void handleEvent(const AppEvent &event){
       case STATE_REMINDER_HOME:
       case STATE_SETTINGS_HOME:
         AppNavigation::rotateMainState(step);
-        if(settings.buzzer) BuzzerDriver::trigger(20);
+        if(settings.buzzer) HardwareRequests::requestBeep(20, CommandSource::INPUTS);
         break;
 
       default:
@@ -220,14 +251,14 @@ void handleEvent(const AppEvent &event){
   if(ev==EVENT_CLICK){
     switch(AppNavigation::current()){
       case STATE_CLOCK:
-        ClockFeature::nextQuote();
+        ClockFeature::nextQuote(now);
         break;
 
       case STATE_TIMER_VIEW:
         if(TimerFeature::isRunning()){
-          TimerFeature::pause(millis());
+          TimerFeature::pause(now);
         } else {
-          TimerFeature::start(millis());
+          TimerFeature::start(now);
         }
         break;
 
@@ -241,7 +272,7 @@ void handleEvent(const AppEvent &event){
         break;
 
       case STATE_STOPWATCH:
-        StopwatchFeature::toggle(millis());
+        StopwatchFeature::toggle(now);
         break;
 
       case STATE_REMINDER_HOME:
@@ -273,7 +304,7 @@ void handleEvent(const AppEvent &event){
         break;
     }
 
-    if(settings.buzzer) BuzzerDriver::trigger(40);
+    if(settings.buzzer) HardwareRequests::requestBeep(40, CommandSource::INPUTS);
   }
 
   if(ev==EVENT_DOUBLE_CLICK){
@@ -285,11 +316,11 @@ void handleEvent(const AppEvent &event){
 
       case STATE_REMINDER_LIST:
         AppNavigation::enter(STATE_REMINDER_HOME);
-        if(settings.buzzer) BuzzerDriver::trigger(80);
+        if(settings.buzzer) HardwareRequests::requestBeep(80, CommandSource::INPUTS);
         break;
 
       case STATE_SETTINGS_EDIT:
-        SettingsFlow::commitEdit();
+        SettingsFlow::commitEdit(now);
         break;
 
       case STATE_SETTINGS_MENU:
@@ -309,7 +340,7 @@ void handleEvent(const AppEvent &event){
 
       case STATE_STOPWATCH:
         StopwatchFeature::reset();
-        if(settings.buzzer) BuzzerDriver::trigger(120);
+        if(settings.buzzer) HardwareRequests::requestBeep(120, CommandSource::INPUTS);
         break;
 
       default:
@@ -338,7 +369,7 @@ void handleEvent(const AppEvent &event){
         break;
 
       case STATE_SETTINGS_EDIT:
-        SettingsFlow::commitEdit();
+        SettingsFlow::commitEdit(now);
         SettingsFlow::exitToClock();
         break;
 
@@ -352,70 +383,146 @@ void handleEvent(const AppEvent &event){
       default:
         break;
     }
-    if(settings.buzzer) BuzzerDriver::trigger(120);
+    if(settings.buzzer) HardwareRequests::requestBeep(120, CommandSource::INPUTS);
   }
 }
 
-void processEvents(){
+bool processEvents(unsigned long now){
+  bool processed = false;
   AppEvent event;
   while(dequeueEvent(event)){
-    handleEvent(event);
+    processed = true;
+    handleEvent(event, now);
   }
+  return processed;
 }
 
+void flushUiFrame(){
+  HardwareRequests::writeDisplayRows(UiScreens::row(0), UiScreens::row(1));
 }
 
-namespace Application {
-
-void setup(){
-  initHardware();
-  TimerFeature::begin();
-
-  while(!bootAnimation()){ BuzzerDriver::update(); }
-
-  ClockFeature::begin();
-  LcdDriver::clear();
+UiScreens::TimerScreenData timerScreenData(unsigned long now){
+  UiScreens::TimerScreenData data = {
+    TimerFeature::isRunning(),
+    TimerFeature::totalMillis(),
+    TimerFeature::remainingMillis(now),
+    TimerFeature::hours(),
+    TimerFeature::minutes(),
+    TimerFeature::seconds(),
+    (uint8_t)TimerFeature::editField()
+  };
+  return data;
 }
 
-void loop(){
-  unsigned long now=millis();
+UiScreens::StopwatchScreenData stopwatchScreenData(){
+  UiScreens::StopwatchScreenData data = {
+    StopwatchFeature::elapsed()
+  };
+  return data;
+}
+
+UiScreens::RemindersScreenData remindersScreenData(){
+  uint8_t nextHour = 0;
+  uint8_t nextMinute = 0;
+  bool hasNext = RemindersFeature::getNext(nextHour, nextMinute);
+
+  UiScreens::RemindersScreenData data = {
+    RemindersFeature::MAX_REMINDERS,
+    RemindersFeature::selectedIndex(),
+    RemindersFeature::selectedActive(),
+    RemindersFeature::selectedHour(),
+    RemindersFeature::selectedMinute(),
+    (uint8_t)RemindersFeature::editField(),
+    hasNext,
+    nextHour,
+    nextMinute,
+    RemindersFeature::activeAlarmIndex(),
+    RemindersFeature::activeAlarmHour(),
+    RemindersFeature::activeAlarmMinute()
+  };
+  return data;
+}
+
+void runBuzzerTask(FrameContext &context){
+  (void)context;
+  HardwareRequests::serviceBuzzer();
+}
+
+void runHardwareRequestTask(FrameContext &context){
+  (void)context;
+  HardwareRequests::executePending();
+}
+
+void runLightingTask(FrameContext &context){
+  (void)context;
   DeviceSettings &settings = SettingsFlow::settings();
+  LightingFeature::refreshSchedule(settings);
+  HardwareRequests::requestBacklight(LightingFeature::backlightEnabled(settings), CommandSource::LIGHTING);
+}
 
-  BuzzerDriver::update();
+void runLedTask(FrameContext &context){
+  (void)context;
+  static bool initialized = false;
+  static LedState appliedMode = LED_IDLE;
 
-  if(Timing::intervalElapsed(now,lastLightScheduleCheck,1000)){
-    LightingFeature::refresh(settings);
+  const LedState requestedMode = LightingFeature::requestedMode();
+  if(!initialized || systemContext.lighting.driverModeDirty || requestedMode != appliedMode){
+    HardwareRequests::requestLedMode(requestedMode, CommandSource::LIGHTING);
+    appliedMode = requestedMode;
+    initialized = true;
+    systemContext.lighting.driverModeDirty = false;
+    HardwareRequests::executePending();
   }
 
-  NeoPixelDriver::update(LightingFeature::allowsOutput());
+  HardwareRequests::updateLeds(LightingFeature::allowsOutput());
+}
+
+void runTimerTask(FrameContext &context){
+  const unsigned long now = context.nowMs;
 
   if(AppNavigation::current()==STATE_TIMER_ALARM && TimerFeature::shouldAlarmBeep(now)){
-    BuzzerDriver::trigger(200);
+    HardwareRequests::requestBeep(200, CommandSource::TIMER);
   }
   if(AppNavigation::current()==STATE_TIMER_ALARM && TimerFeature::alarmTimedOut(now)){
-    enqueueEvent(EVENT_TIMER_ALARM_TIMEOUT);
+    enqueueTimerEvent(EVENT_TIMER_ALARM_TIMEOUT);
   }
 
-  checkTimerDone();
+  checkTimerDone(now);
+}
 
-  if(Timing::intervalElapsed(now,lastReminderCheck,1000)){
-    checkReminders();
-  }
+void runReminderCheckTask(FrameContext &context){
+  (void)context;
+  checkReminders();
+}
 
-  if(AppNavigation::current()==STATE_REMINDER_ALARM){
-    updateReminderAlarm();
-  }
+void runReminderAlarmTask(FrameContext &context){
+  updateReminderAlarm(context.nowMs);
+}
 
-  EventType inputEvent=EncoderDriver::readEvent();
+void runInputTask(FrameContext &context){
+  (void)context;
+  EventType inputEvent=InputService::readEvent();
   if(inputEvent!=EVENT_NONE){
-    enqueueEvent(inputEvent);
+    int8_t direction = 0;
+    if(inputEvent==EVENT_ROTATE_CW) direction = 1;
+    else if(inputEvent==EVENT_ROTATE_CCW) direction = -1;
+    enqueueEncoderEvent(inputEvent, direction);
   }
+}
 
-  processEvents();
+void runEventTask(FrameContext &context){
+  if(processEvents(context.nowMs)){
+    runLightingTask(context);
+  }
+}
 
-  if(now-lastDisplayRefresh>250 || AppNavigation::hasStateChanged()){
+void runUiTask(FrameContext &context){
+  const unsigned long now = context.nowMs;
+  DeviceSettings &settings = SettingsFlow::settings();
+
+  if(now-systemContext.ui.lastRefreshMs>250 || AppNavigation::hasStateChanged()){
     if(AppNavigation::hasStateChanged()){
-      LcdDriver::clear();
+      HardwareRequests::clearDisplay();
       AppNavigation::clearStateChanged();
     }
     updateBlinkState(now);
@@ -429,33 +536,88 @@ void loop(){
       case STATE_TIMER_VIEW:
       case STATE_TIMER_EDIT:
       case STATE_TIMER_ALARM:
-        UiScreens::renderTimerScreen(AppNavigation::current(),now,blinkState);
+        UiScreens::renderTimerScreen(AppNavigation::current(),timerScreenData(now),systemContext.ui.blinkState);
         break;
 
       case STATE_STOPWATCH:
         StopwatchFeature::update(now);
-        UiScreens::renderStopwatchScreen();
+        UiScreens::renderStopwatchScreen(stopwatchScreenData());
         break;
 
       case STATE_REMINDER_HOME:
       case STATE_REMINDER_LIST:
       case STATE_REMINDER_EDIT:
-        UiScreens::renderRemindersScreen(AppNavigation::current(),settings.format24,blinkState);
+        UiScreens::renderRemindersScreen(AppNavigation::current(),remindersScreenData(),settings.format24,systemContext.ui.blinkState);
         break;
 
       case STATE_SETTINGS_HOME:
       case STATE_SETTINGS_MENU:
       case STATE_SETTINGS_EDIT:
-        UiScreens::renderSettingsScreen(AppNavigation::current(),settings,SettingsFlow::snapshot(FIRMWARE_VERSION,blinkState));
+        UiScreens::renderSettingsScreen(AppNavigation::current(),settings,SettingsFlow::snapshot(FIRMWARE_VERSION,systemContext.ui.blinkState));
         break;
 
       case STATE_REMINDER_ALARM:
-        UiScreens::renderReminderAlarmScreen();
+        UiScreens::renderReminderAlarmScreen(remindersScreenData());
         break;
     }
 
-    lastDisplayRefresh=now;
+    flushUiFrame();
+    systemContext.ui.lastRefreshMs=now;
   }
+}
+
+void runDiagnosticsTask(FrameContext &context){
+  (void)context;
+  const SchedulerStats &schedulerStats = scheduler.stats();
+  const HardwareRequestStats &hardwareStats = HardwareRequests::stats();
+  const EventQueueStats &eventStats = eventQueueStats();
+
+  LOG_INFO(
+    LogTag::APP,
+    "sched loops=%lu tasks=%lu overruns=%u maxLoop=%luus events q=%lu d=%lu drop=%u max=%u seq=%u hw q=%lu x=%lu drop=%u max=%u seq=%u age=%lums",
+    (unsigned long)schedulerStats.loopCount,
+    (unsigned long)schedulerStats.taskRunCount,
+    schedulerStats.overrunCount,
+    (unsigned long)schedulerStats.maxLoopRuntimeUs,
+    (unsigned long)eventStats.queued,
+    (unsigned long)eventStats.dequeued,
+    eventStats.dropped,
+    eventStats.maxDepth,
+    eventStats.lastSequenceId,
+    (unsigned long)hardwareStats.queued,
+    (unsigned long)hardwareStats.executed,
+    hardwareStats.dropped,
+    hardwareStats.maxDepth,
+    hardwareStats.lastSequenceId,
+    (unsigned long)hardwareStats.maxCommandAgeMs
+  );
+}
+
+}
+
+namespace Application {
+
+void setup(){
+  initHardware();
+  TimerFeature::begin();
+
+  while(!bootAnimation(millis())){
+    flushUiFrame();
+    HardwareRequests::executePending();
+    HardwareRequests::serviceBuzzer();
+  }
+  flushUiFrame();
+
+  const unsigned long now = millis();
+  ClockFeature::begin(now);
+  HardwareRequests::clearDisplay();
+  UiScreens::clearFrame();
+  scheduler.reset(now);
+  LOG_INFO(LogTag::APP, "DeskDroid %s ready with %u scheduled tasks", FIRMWARE_VERSION, scheduler.taskCount());
+}
+
+void loop(){
+  scheduler.run(millis());
 }
 
 }

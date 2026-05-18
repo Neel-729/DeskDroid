@@ -2,8 +2,7 @@
 
 #include "../core/events.h"
 #include "../core/settings_store.h"
-#include "../drivers/buzzer_driver.h"
-#include "../drivers/rtc_driver.h"
+#include "../core/time_service.h"
 
 namespace {
 ReminderRecord reminders[RemindersFeature::MAX_REMINDERS];
@@ -31,14 +30,14 @@ void save(){
 void check(bool alarmActive){
   if(alarmActive) return;
 
-  DateTime now = RtcDriver::now();
+  DateTime now = TimeService::now();
   uint32_t minuteStamp = now.unixtime() / 60UL;
   if(minuteStamp == lastReminderTriggerStamp) return;
 
   for(uint8_t i=0;i<MAX_REMINDERS;i++){
     if(!reminders[i].active) continue;
     if(now.hour()==reminders[i].hour && now.minute()==reminders[i].minute){
-      if(enqueueEvent(EVENT_REMINDER_TRIGGER, i)){
+      if(enqueueReminderEvent(EVENT_REMINDER_TRIGGER, i)){
         lastReminderTriggerStamp = minuteStamp;
       }
       break;
@@ -96,7 +95,7 @@ uint8_t selectedMinute(){
 }
 
 bool getNext(uint8_t &hour, uint8_t &minute){
-  DateTime now = RtcDriver::now();
+  DateTime now = TimeService::now();
 
   int nowMinutes = now.hour()*60 + now.minute();
   int bestDiff = 1440;
@@ -121,9 +120,9 @@ bool getNext(uint8_t &hour, uint8_t &minute){
   return found;
 }
 
-void startAlarm(uint8_t idx){
+void startAlarm(uint8_t idx, unsigned long now){
   activeReminder = idx;
-  reminderAlarmStart = millis();
+  reminderAlarmStart = now;
   reminderBeepStage = 0;
   lastReminderBeep = 0;
 }
@@ -132,19 +131,19 @@ void stopAlarm(){
   activeReminder = 255;
 }
 
-void updateAlarm(){
-  if(activeReminder>=MAX_REMINDERS) return;
+bool updateAlarm(unsigned long now){
+  if(activeReminder>=MAX_REMINDERS) return false;
 
-  unsigned long now = millis();
   if(now - reminderAlarmStart > 60000){
-    enqueueEvent(EVENT_REMINDER_TIMEOUT);
-    return;
+    enqueueReminderEvent(EVENT_REMINDER_TIMEOUT, activeReminder);
+    return false;
   }
 
+  bool shouldBeep = false;
   if(now - lastReminderBeep > 120){
     uint8_t stage = reminderBeepStage % 8;
     if(stage==0 || stage==2 || stage==4){
-      BuzzerDriver::trigger(80);
+      shouldBeep = true;
     }
     reminderBeepStage++;
     if(reminderBeepStage >= 8){
@@ -154,6 +153,7 @@ void updateAlarm(){
       lastReminderBeep = now;
     }
   }
+  return shouldBeep;
 }
 
 uint8_t activeAlarmIndex(){
