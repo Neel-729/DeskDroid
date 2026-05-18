@@ -1,15 +1,13 @@
 # DeskDroid
-> A modular ESP32-powered smart desktop ecosystem focused on automation, real-time interaction, embedded systems engineering, and scalable hardware architecture.
+### A modular ESP32-powered smart desktop ecosystem focused on automation, real-time interaction, embedded systems engineering, and scalable hardware architecture.
 
-
-
-
-
+[![Static Badge](https://img.shields.io/badge/Version-2.6-green)](https://github.com/Neel-729/DeskDroid)
+[![Static Badge](https://img.shields.io/badge/Previous--version-2.5-orange)](https://github.com/Neel-729/DeskDroid/blob/main/DeskDroidArchives/v2.5.main.cpp)
 
 
 ---
 
-# What is DeskDroid?
+## What is DeskDroid?
 
 DeskDroid is a modular embedded desktop assistant built around the ESP32 ecosystem.
 
@@ -35,9 +33,9 @@ The architecture emphasizes:
 
 ---
 
-# Core Features
+## Core Features
 
-## Current Features
+### Current Features
 
 - Real-time clock system
 - Timer functionality
@@ -54,7 +52,7 @@ The architecture emphasizes:
 
 ---
 
-# Hardware Stack
+## Hardware Stack
 
 | Component       | Purpose                                |
 | --------------- | -------------------------------------- |
@@ -68,7 +66,7 @@ The architecture emphasizes:
 
 ---
 
-# Firmware Architecture
+## Firmware Architecture
 
 DeskDroid uses a layered modular architecture to keep the codebase scalable and maintainable.
 
@@ -83,50 +81,50 @@ src/
 └── main.cpp    → System entry point
 ```
 
-## Architecture Philosophy
+### Architecture Philosophy
 
-### 1. Hardware Abstraction
+#### 1. Hardware Abstraction
 
 Drivers isolate hardware-specific logic from application logic.
 
-### 2. Event-Driven Flow
+#### 2. Event-Driven Flow
 
 The system avoids tightly coupled logic by routing interactions through centralized event handling.
 
-### 3. Modular Expansion
+#### 3. Modular Expansion
 
 New features can be added without rewriting the entire firmware.
 
-### 4. Scalable Design
+#### 4. Scalable Design
 
 The firmware is structured to support future peripherals, sensors, wireless modules, and automation systems.
 
 ---
 
-# Current Modules
+## Current Modules
 
-## Clock Module
+### Clock Module
 
 - RTC integration
 - Real-time display
 - Persistent time tracking
 
-## Timer Module
+### Timer Module
 
 - Countdown timer support
 - Audio completion alerts
 
-## Stopwatch Module
+### Stopwatch Module
 
 - Start / stop / reset functionality
 - Live UI updates
 
-## Reminder System
+### Reminder System
 
 - Scheduled reminders
 - Event-based notifications
 
-## Lighting Engine
+### Lighting Engine
 
 - NeoPixel animations
 - System state indication
@@ -134,9 +132,9 @@ The firmware is structured to support future peripherals, sensors, wireless modu
 
 ---
 
-# Future Roadmap
+## Future Roadmap
 
-## Planned Features
+### Planned Features
 
 - Wi-Fi integration
 - Mobile companion app
@@ -150,7 +148,7 @@ The firmware is structured to support future peripherals, sensors, wireless modu
 - Sensor ecosystem support
 - Advanced animation engine
 
-## Long-Term Vision
+### Long-Term Vision
 
 DeskDroid is intended to evolve from a desktop utility device into a modular smart environment controller capable of handling:
 
@@ -163,7 +161,7 @@ DeskDroid is intended to evolve from a desktop utility device into a modular sma
 
 ---
 
-# Tech Stack
+## Tech Stack
 
 | Layer              | Technology         |
 | ------------------ | ------------------ |
@@ -177,9 +175,9 @@ DeskDroid is intended to evolve from a desktop utility device into a modular sma
 
 ---
 
-# Getting Started
+## Getting Started
 
-## Requirements
+### Requirements
 
 - VS Code
 - PlatformIO Extension
@@ -188,7 +186,7 @@ DeskDroid is intended to evolve from a desktop utility device into a modular sma
 
 ---
 
-## Clone Repository
+### Clone Repository
 
 ```bash
 git clone https://github.com/Neel-729/DeskDroid.git
@@ -197,7 +195,7 @@ cd DeskDroid
 
 ---
 
-## Build Firmware
+### Build Firmware
 
 ```bash
 pio run
@@ -205,7 +203,7 @@ pio run
 
 ---
 
-## Upload Firmware
+### Upload Firmware
 
 ```bash
 pio run --target upload
@@ -213,7 +211,7 @@ pio run --target upload
 
 ---
 
-## Serial Monitor
+### Serial Monitor
 
 ```bash
 pio device monitor
@@ -221,7 +219,7 @@ pio device monitor
 
 ---
 
-# Wiring Overview
+## Wiring Overview
 
 > Pin mappings may change as development progresses.
 
@@ -235,7 +233,7 @@ pio device monitor
 
 ---
 
-# Engineering Goals
+## Engineering Goals
 
 DeskDroid focuses heavily on real embedded engineering practices rather than quick prototyping.
 
@@ -250,7 +248,7 @@ Key priorities:
 
 ---
 
-# Why This Project Exists
+## Why This Project Exists
 
 Most DIY desk gadgets are isolated single-purpose builds.
 
@@ -268,7 +266,7 @@ The project is also intended as a long-term embedded systems engineering journey
 
 ---
 
-# Contributing
+## Contributing
 
 Contributions, suggestions, architectural feedback, and hardware ideas are welcome.
 
@@ -281,7 +279,7 @@ If you want to improve the firmware:
 
 ---
 
-# License
+## License
 
 This project is licensed under the MIT License.
 
@@ -289,9 +287,10 @@ See the [LICENSE](LICENSE) file for details.
 
 ---
 
-# Author
+## Author
 
 Built by Ace.
+> Neel Indalkar
 
 Focused on embedded systems, modular engineering, automation, and scalable smart hardware systems.
 
