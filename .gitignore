@@ -80,8 +80,8 @@ docs/build/
 # =========================
 # ESP Crash Dumps / Core Dumps
 # =========================
-core
-core.*
+/core
+/core.*
 
 # =========================
 # CMake / Misc Tooling
