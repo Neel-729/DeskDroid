@@ -32,7 +32,7 @@ void check(bool alarmActive){
   if(alarmActive) return;
 
   DateTime now = RtcDriver::now();
-  uint32_t minuteStamp = (uint32_t)now.day() * 1440UL + (uint32_t)now.hour() * 60UL + now.minute();
+  uint32_t minuteStamp = now.unixtime() / 60UL;
   if(minuteStamp == lastReminderTriggerStamp) return;
 
   for(uint8_t i=0;i<MAX_REMINDERS;i++){
@@ -171,4 +171,3 @@ uint8_t activeAlarmMinute(){
 }
 
 }
-
