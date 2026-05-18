@@ -1,11 +1,4 @@
 # DeskDroid
-
-[![https://img.shields.io/badge/Platform-ESP32-E7352C?logo=espressif&logoColor=white](https://www.espressif.com/en/products/socs/esp32)
-[![https://img.shields.io/badge/Framework-Arduino-00979D?logo=arduino&logoColor=white](https://www.arduino.cc/)
-[![https://img.shields.io/badge/Build-PlatformIO-F5822A?logo=platformio&logoColor=white](https://platformio.org/)
-[![https://img.shields.io/badge/Language-C%2B%2B-00599C?logo=cplusplus&logoColor=white](https://isocpp.org/)
-[![https://img.shields.io/badge/License-MIT-green.svg](https://opensource.org/licenses/MIT)
-
 > A modular ESP32-powered smart desktop ecosystem focused on automation, real-time interaction, embedded systems engineering, and scalable hardware architecture.
 
 
