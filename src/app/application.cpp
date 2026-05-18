@@ -22,7 +22,7 @@
 
 namespace {
 
-constexpr const char* FIRMWARE_VERSION = "2.5";
+constexpr const char* FIRMWARE_VERSION = "2.6";
 
 SystemContext systemContext;
 

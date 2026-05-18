@@ -1,11 +1,11 @@
 # DeskDroid
 ## Modular smart desktop assistant built around embedded systems, automation, and integrated desktop utilities.
-[![Static Badge](https://img.shields.io/badge/Version-2.5-green)](https://github.com/Neel-729/DeskDroid)
+[![Static Badge](https://img.shields.io/badge/Version-2.6-green)](https://github.com/Neel-729/DeskDroid)
 
 ---
 
 ## Overview
-### Desk Droid V2.5 is a custom smart desktop platform focused on combining multiple electronics and utility systems into a single modular unit.
+### Desk Droid V2.6 is a custom smart desktop platform focused on combining multiple electronics and utility systems into a single modular unit.
 ### The project is designed around:
 - Embedded systems engineering
 - Modular hardware integration
