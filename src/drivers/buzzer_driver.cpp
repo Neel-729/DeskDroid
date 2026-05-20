@@ -1,7 +1,7 @@
 #include "buzzer_driver.h"
 
 namespace {
-constexpr uint8_t BUZZER_PIN = 4;
+constexpr uint8_t BUZZER_PIN = 23;
 unsigned long beepUntil = 0;
 }
 
