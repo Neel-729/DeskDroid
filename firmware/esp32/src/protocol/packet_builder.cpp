@@ -1,17 +1,79 @@
 #include "packet_builder.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 
 namespace PacketBuilder {
 
-size_t ping(char* buffer, size_t bufferSize) {
-  if (buffer == nullptr || bufferSize == 0) {
+namespace {
+
+size_t checkedSnprintf(char* buffer, size_t bufferSize, const char* format, ...){
+  if(buffer == nullptr || bufferSize == 0) {
     return 0;
   }
 
-  const int written = snprintf(buffer, bufferSize, "<PING>");
-  return written > 0 ? static_cast<size_t>(written) : 0;
+  va_list args;
+  va_start(args, format);
+  const int written = vsnprintf(buffer, bufferSize, format, args);
+  va_end(args);
+
+  if(written <= 0 || static_cast<size_t>(written) >= bufferSize){
+    buffer[0] = '\0';
+    return 0;
+  }
+
+  return static_cast<size_t>(written);
+}
+
+}  // namespace
+
+size_t ping(char* buffer, size_t bufferSize) {
+  return checkedSnprintf(buffer, bufferSize, "<PING>");
+}
+
+size_t setRelay(char* buffer, size_t bufferSize, uint8_t relayNumber, bool enabled) {
+  return checkedSnprintf(buffer, bufferSize, "<SET_RELAY|%u|%s>", relayNumber, enabled ? "ON" : "OFF");
+}
+
+size_t setColor(char* buffer, size_t bufferSize, const RGBColor &color) {
+  return checkedSnprintf(buffer, bufferSize, "<SET_COLOR|%u|%u|%u>", color.r, color.g, color.b);
+}
+
+size_t setBrightness(char* buffer, size_t bufferSize, uint8_t brightness) {
+  return checkedSnprintf(buffer, bufferSize, "<SET_BRIGHTNESS|%u>", brightness);
+}
+
+size_t setEffect(char* buffer, size_t bufferSize, EffectType effect) {
+  return checkedSnprintf(buffer, bufferSize, "<SET_EFFECT|%s>", effectName(effect));
+}
+
+size_t fullSync(char* buffer, size_t bufferSize, const SystemState &state) {
+  return checkedSnprintf(
+    buffer,
+    bufferSize,
+    "<FULL_SYNC|R1=%u|R2=%u|R3=%u|R4=%u|BR=%u|FX=%s|CR=%u,%u,%u|LED=%u>",
+    state.relayStates[0] ? 1 : 0,
+    state.relayStates[1] ? 1 : 0,
+    state.relayStates[2] ? 1 : 0,
+    state.relayStates[3] ? 1 : 0,
+    state.brightness,
+    effectName(state.currentEffect),
+    state.currentColor.r,
+    state.currentColor.g,
+    state.currentColor.b,
+    state.ledsEnabled ? 1 : 0
+  );
+}
+
+const char* effectName(EffectType effect) {
+  switch(effect){
+    case EffectType::None: return "NONE";
+    case EffectType::Solid: return "SOLID";
+    case EffectType::Breathing: return "BREATHING";
+    case EffectType::Rainbow: return "RAINBOW";
+  }
+
+  return "NONE";
 }
 
 }  // namespace PacketBuilder
-

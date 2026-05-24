@@ -12,11 +12,25 @@ struct RgbColor {
 
 enum class LedEffect : uint8_t {
   None = 0,
+  Solid,
+  Breathing,
+  Rainbow,
+};
+
+struct StateSnapshot {
+  bool relayStates[Config::RelayCount] = {};
+  uint8_t brightness = Config::DefaultBrightness;
+  RgbColor color{};
+  LedEffect activeEffect = LedEffect::None;
+  bool ledsEnabled = false;
 };
 
 class StateCache {
  public:
   void begin();
+
+  void applySnapshot(const StateSnapshot& snapshot);
+  StateSnapshot snapshot() const;
 
   void setRelayState(uint8_t relayNumber, bool enabled);
   bool relayState(uint8_t relayNumber) const;
@@ -30,10 +44,13 @@ class StateCache {
   void setActiveEffect(LedEffect effect);
   LedEffect activeEffect() const;
 
+  void setLedsEnabled(bool enabled);
+  bool ledsEnabled() const;
+
  private:
   bool relayStates_[Config::RelayCount] = {};
   uint8_t brightness_ = Config::DefaultBrightness;
   RgbColor color_{};
   LedEffect activeEffect_ = LedEffect::None;
+  bool ledsEnabled_ = false;
 };
-

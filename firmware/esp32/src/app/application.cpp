@@ -12,12 +12,14 @@
 #include "../core/logging.h"
 #include "../core/scheduler.h"
 #include "../core/settings_store.h"
+#include "../core/system_state.h"
 #include "../core/time_service.h"
 #include "../features/clock.h"
 #include "../features/lighting.h"
 #include "../features/reminders.h"
 #include "../features/stopwatch.h"
 #include "../features/timer.h"
+#include "../protocol/esp8266_link.h"
 #include "../ui/screens.h"
 
 namespace {
@@ -27,6 +29,7 @@ constexpr const char* FIRMWARE_VERSION = "2.6";
 SystemContext systemContext;
 
 void runBuzzerTask(FrameContext &context);
+void runEsp8266LinkTask(FrameContext &context);
 void runHardwareRequestTask(FrameContext &context);
 void runLightingTask(FrameContext &context);
 void runLedTask(FrameContext &context);
@@ -43,6 +46,7 @@ UiScreens::StopwatchScreenData stopwatchScreenData();
 UiScreens::RemindersScreenData remindersScreenData();
 
 ScheduledTask scheduledTasks[] = {
+  { "esp8266-link", 0, 0, 0, 1200, 0, 0, true, runEsp8266LinkTask },
   { "buzzer", 5, 0, 0, 250, 0, 0, true, runBuzzerTask },
   { "hardware", 0, 0, 0, 1500, 0, 0, true, runHardwareRequestTask },
   { "lighting", 1000, 0, 0, 1500, 0, 0, true, runLightingTask },
@@ -96,7 +100,9 @@ void initHardware(){
   Serial.begin(115200);
   SettingsStore::begin();
   SettingsFlow::begin();
+  SystemStateStore::begin(SettingsFlow::settings());
   HardwareRequests::beginLocal(SettingsFlow::settings());
+  Esp8266Link::begin();
 
   if(!TimeService::begin()){
     UiScreens::renderRtcErrorScreen();
@@ -446,6 +452,11 @@ UiScreens::RemindersScreenData remindersScreenData(){
 void runBuzzerTask(FrameContext &context){
   (void)context;
   HardwareRequests::serviceBuzzer();
+}
+
+void runEsp8266LinkTask(FrameContext &context){
+  (void)context;
+  Esp8266Link::update();
 }
 
 void runHardwareRequestTask(FrameContext &context){

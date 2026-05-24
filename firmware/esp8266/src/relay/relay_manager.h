@@ -13,9 +13,14 @@ class RelayManager {
   void update();
 
   bool setRelay(uint8_t relayNumber, bool enabled);
+  void applyStateCache();
   void allOff();
 
  private:
-  StateCache& state_;
-};
+  void applyRelay(uint8_t index, bool enabled);
 
+  StateCache& state_;
+  bool desiredStates_[Config::RelayCount] = {};
+  bool appliedStates_[Config::RelayCount] = {};
+  bool dirty_[Config::RelayCount] = {};
+};

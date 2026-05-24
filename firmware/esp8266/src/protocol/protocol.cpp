@@ -1,12 +1,14 @@
 #include "protocol.h"
 
+#include <string.h>
+
 namespace {
 constexpr char PacketStart = '<';
 constexpr char PacketEnd = '>';
 }  // namespace
 
-Protocol::Protocol(Stream& stream, RelayManager& relayManager, LedEngine& ledEngine)
-    : stream_(stream), dispatcher_(stream, relayManager, ledEngine) {}
+Protocol::Protocol(Stream& stream, CommandQueue& commandQueue)
+    : stream_(stream), commandQueue_(commandQueue) {}
 
 void Protocol::begin() {
   resetPacket();
@@ -51,7 +53,13 @@ void Protocol::consume(char c) {
 
   if (packetLength_ >= Config::MaxPacketSize) {
     resetPacket();
-    dispatcher_.sendError(ProtocolError::PacketTooLong);
+    ProtocolResponse::sendError(stream_, ProtocolError::PacketTooLong);
+    return;
+  }
+
+  if (!isAllowedPacketChar(c)) {
+    resetPacket();
+    ProtocolResponse::sendError(stream_, ProtocolError::InvalidPacket);
     return;
   }
 
@@ -60,12 +68,23 @@ void Protocol::consume(char c) {
 }
 
 void Protocol::processPacket() {
+  char validationBuffer[Config::MaxPacketSize + 1] = {};
+  strncpy(validationBuffer, packet_, Config::MaxPacketSize);
+  validationBuffer[Config::MaxPacketSize] = '\0';
+
   Packet packet;
-  const ParseResult result = parser_.parse(packet_, packet);
+  const ParseResult result = parser_.parse(validationBuffer, packet);
   if (result != ParseResult::Ok) {
-    dispatcher_.sendError(ProtocolError::InvalidPacket);
+    ProtocolResponse::sendError(stream_, ProtocolError::InvalidPacket);
     return;
   }
 
-  dispatcher_.dispatch(packet);
+  if (!commandQueue_.enqueue(packet_)) {
+    ProtocolResponse::sendError(stream_, ProtocolError::QueueFull);
+    return;
+  }
+}
+
+bool Protocol::isAllowedPacketChar(char c) const {
+  return c >= 32 && c <= 126;
 }

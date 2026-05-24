@@ -2,15 +2,8 @@
 
 #include <Arduino.h>
 
-class Logger {
- public:
-  explicit Logger(Stream& stream);
+namespace Logger {
 
-  void setEnabled(bool enabled);
-  void info(const __FlashStringHelper* message);
+void info(Stream& stream, const __FlashStringHelper* subsystem, const __FlashStringHelper* message);
 
- private:
-  Stream& stream_;
-  bool enabled_ = false;
-};
-
+}  // namespace Logger

@@ -2,11 +2,29 @@
 
 #include <Arduino.h>
 
+#include "../core/hardware_types.h"
+
+enum class Esp8266ConnectionState : uint8_t {
+  Disconnected,
+  Connecting,
+  Syncing,
+  Running,
+  Error,
+};
+
 namespace Esp8266Link {
 
-void begin(Stream& stream);
+void begin();
 void update();
 bool isLinked();
+bool isRunning();
+Esp8266ConnectionState state();
+
+bool setRelay(uint8_t relayNumber, bool enabled);
+void setLedsEnabled(bool enabled);
+void setBrightnessLevel(uint8_t level);
+void setIdlePreset(LedIdlePreset preset);
+void setLedMode(LedState mode);
+void requestFullSync();
 
 }  // namespace Esp8266Link
-

@@ -7,6 +7,29 @@ void StateCache::begin() {
   brightness_ = Config::DefaultBrightness;
   color_ = {};
   activeEffect_ = LedEffect::None;
+  ledsEnabled_ = false;
+}
+
+void StateCache::applySnapshot(const StateSnapshot& snapshot) {
+  for (uint8_t i = 0; i < Config::RelayCount; ++i) {
+    relayStates_[i] = snapshot.relayStates[i];
+  }
+  brightness_ = snapshot.brightness;
+  color_ = snapshot.color;
+  activeEffect_ = snapshot.activeEffect;
+  ledsEnabled_ = snapshot.ledsEnabled;
+}
+
+StateSnapshot StateCache::snapshot() const {
+  StateSnapshot result;
+  for (uint8_t i = 0; i < Config::RelayCount; ++i) {
+    result.relayStates[i] = relayStates_[i];
+  }
+  result.brightness = brightness_;
+  result.color = color_;
+  result.activeEffect = activeEffect_;
+  result.ledsEnabled = ledsEnabled_;
+  return result;
 }
 
 void StateCache::setRelayState(uint8_t relayNumber, bool enabled) {
@@ -47,3 +70,10 @@ LedEffect StateCache::activeEffect() const {
   return activeEffect_;
 }
 
+void StateCache::setLedsEnabled(bool enabled) {
+  ledsEnabled_ = enabled;
+}
+
+bool StateCache::ledsEnabled() const {
+  return ledsEnabled_;
+}

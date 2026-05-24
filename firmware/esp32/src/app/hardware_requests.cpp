@@ -1,6 +1,7 @@
 #include "hardware_requests.h"
 
 #include "../core/logging.h"
+#include "../protocol/esp8266_link.h"
 #include "../drivers/buzzer_driver.h"
 #include "../drivers/lcd_driver.h"
 #include "../drivers/neopixel_driver.h"
@@ -51,6 +52,7 @@ void execute(const HardwareCommand &command){
 
     case HardwareCommandType::LED_MODE:
       NeoPixelDriver::setState((LedState)command.value);
+      Esp8266Link::setLedMode((LedState)command.value);
       LOG_INFO(
         LogTag::LED,
         "Mode requested %u seq=%u src=%s age=%lums",
@@ -63,10 +65,12 @@ void execute(const HardwareCommand &command){
 
     case HardwareCommandType::IDLE_PRESET:
       NeoPixelDriver::setIdlePreset((LedIdlePreset)command.value);
+      Esp8266Link::setIdlePreset((LedIdlePreset)command.value);
       break;
 
     case HardwareCommandType::LED_BRIGHTNESS:
       NeoPixelDriver::setBrightnessLevel((uint8_t)command.value);
+      Esp8266Link::setBrightnessLevel((uint8_t)command.value);
       break;
 
     case HardwareCommandType::BACKLIGHT:
@@ -155,6 +159,7 @@ void serviceBuzzer(){
 
 void updateLeds(bool lightsAllowed){
   NeoPixelDriver::update(lightsAllowed);
+  Esp8266Link::setLedsEnabled(lightsAllowed);
 }
 
 void clearDisplay(){

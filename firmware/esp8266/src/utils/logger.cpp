@@ -1,18 +1,21 @@
 #include "logger.h"
 
-Logger::Logger(Stream& stream) : stream_(stream) {}
+#include "config.h"
 
-void Logger::setEnabled(bool enabled) {
-  enabled_ = enabled;
+namespace Logger {
+
+void info(Stream& stream, const __FlashStringHelper* subsystem, const __FlashStringHelper* message) {
+#if DESKDROID_ENABLE_LOGGING
+  stream.print(F("<LOG|"));
+  stream.print(subsystem);
+  stream.print(F("|"));
+  stream.print(message);
+  stream.println(F(">"));
+#else
+  (void)stream;
+  (void)subsystem;
+  (void)message;
+#endif
 }
 
-void Logger::info(const __FlashStringHelper* message) {
-  if (!enabled_) {
-    return;
-  }
-
-  stream_.print(F("<LOG|INFO|"));
-  stream_.print(message);
-  stream_.println(F(">"));
-}
-
+}  // namespace Logger

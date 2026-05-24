@@ -13,6 +13,12 @@ const char* tagName(LogTag tag){
     case LogTag::APP: return "APP";
     case LogTag::EVENTS: return "EVENTS";
     case LogTag::LED: return "LED";
+    case LogTag::LINK: return "LINK";
+    case LogTag::SYNC: return "SYNC";
+    case LogTag::STATE: return "STATE";
+    case LogTag::HEARTBEAT: return "HEARTBEAT";
+    case LogTag::PROTO: return "PROTO";
+    case LogTag::SYSTEM: return "SYSTEM";
   }
   return "?";
 }

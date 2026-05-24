@@ -2,8 +2,10 @@
 
 #include <Arduino.h>
 
+#include "config.h"
+
 struct Packet {
-  static constexpr uint8_t MaxTokens = 4;
+  static constexpr uint8_t MaxTokens = Config::MaxPacketTokens;
 
   char* tokens[MaxTokens] = {};
   uint8_t tokenCount = 0;
@@ -22,4 +24,3 @@ class PacketParser {
  public:
   ParseResult parse(char* packetBuffer, Packet& packet) const;
 };
-

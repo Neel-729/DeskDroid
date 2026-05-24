@@ -2,9 +2,16 @@
 
 #include <Arduino.h>
 
+#include "../core/system_state.h"
+
 namespace PacketBuilder {
 
 size_t ping(char* buffer, size_t bufferSize);
+size_t setRelay(char* buffer, size_t bufferSize, uint8_t relayNumber, bool enabled);
+size_t setColor(char* buffer, size_t bufferSize, const RGBColor &color);
+size_t setBrightness(char* buffer, size_t bufferSize, uint8_t brightness);
+size_t setEffect(char* buffer, size_t bufferSize, EffectType effect);
+size_t fullSync(char* buffer, size_t bufferSize, const SystemState &state);
+const char* effectName(EffectType effect);
 
 }  // namespace PacketBuilder
-

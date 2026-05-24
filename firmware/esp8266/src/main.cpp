@@ -2,6 +2,8 @@
 
 #include "config.h"
 #include "led/led_engine.h"
+#include "protocol/command_queue.h"
+#include "protocol/packet_dispatcher.h"
 #include "protocol/protocol.h"
 #include "relay/relay_manager.h"
 #include "system/runtime.h"
@@ -13,9 +15,11 @@ StateCache stateCache;
 RelayManager relayManager(stateCache);
 LedEngine ledEngine(stateCache);
 Heartbeat heartbeat;
-Runtime runtime;
+Runtime runtime(Serial);
 Watchdog watchdog;
-Protocol protocol(Serial, relayManager, ledEngine);
+PacketDispatcher packetDispatcher(Serial, stateCache, relayManager, ledEngine, runtime);
+CommandQueue commandQueue(packetDispatcher);
+Protocol protocol(Serial, commandQueue);
 
 void setup() {
   relayManager.begin();
@@ -23,19 +27,22 @@ void setup() {
   stateCache.begin();
   Serial.begin(Config::SerialBaud);
   protocol.begin();
+  commandQueue.begin();
   ledEngine.begin();
   heartbeat.begin();
   runtime.begin();
   watchdog.begin();
 
-  Serial.println(F("<ACK|BOOT>"));
+  Serial.println(F("<BOOT_READY>"));
+  runtime.markBootReadySent();
 }
 
 void loop() {
   protocol.update();
+  heartbeat.update();
+  commandQueue.update();
   relayManager.update();
   ledEngine.update();
-  heartbeat.update();
   runtime.update();
   watchdog.update();
 }
