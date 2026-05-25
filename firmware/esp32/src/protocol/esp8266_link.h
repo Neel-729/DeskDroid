@@ -20,11 +20,6 @@ bool isLinked();
 bool isRunning();
 Esp8266ConnectionState state();
 
-bool setRelay(uint8_t relayNumber, bool enabled);
-void setLedsEnabled(bool enabled);
-void setBrightnessLevel(uint8_t level);
-void setIdlePreset(LedIdlePreset preset);
-void setLedMode(LedState mode);
 void requestFullSync();
 
 }  // namespace Esp8266Link

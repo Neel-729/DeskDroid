@@ -18,6 +18,7 @@ ReminderEditField editField();
 void advanceEditField();
 void adjustSelected(int step);
 void toggleSelectedActive();
+bool setReminder(uint8_t index, uint8_t hour, uint8_t minute, bool active);
 
 bool selectedActive();
 uint8_t selectedHour();

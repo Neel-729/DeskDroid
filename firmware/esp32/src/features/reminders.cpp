@@ -82,6 +82,14 @@ void toggleSelectedActive(){
   reminders[reminderIndex].active = !reminders[reminderIndex].active;
 }
 
+bool setReminder(uint8_t index, uint8_t hour, uint8_t minute, bool active){
+  if(index >= MAX_REMINDERS || hour > 23 || minute > 59) return false;
+  reminders[index].hour = hour;
+  reminders[index].minute = minute;
+  reminders[index].active = active;
+  return true;
+}
+
 bool selectedActive(){
   return reminders[reminderIndex].active;
 }

@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-enum TimerEditField { EDIT_HOURS, EDIT_MINUTES, EDIT_SECONDS };
+#include "../core/system_state.h"
 
 namespace TimerFeature {
 void begin();

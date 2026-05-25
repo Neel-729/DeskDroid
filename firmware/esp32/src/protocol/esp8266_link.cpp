@@ -24,6 +24,8 @@ char rxPacket[Config::Esp8266MaxPacketSize + 1] = {};
 size_t rxLength = 0;
 bool assembling = false;
 uint32_t observedStateRevision = 0;
+uint16_t nextTxSequenceId = 1;
+uint16_t lastSyncSequenceId = 0;
 
 const char* stateName(Esp8266ConnectionState state){
   switch(state){
@@ -58,9 +60,15 @@ bool sendPacket(const char* packet){
   return true;
 }
 
+uint16_t nextSequenceId(){
+  const uint16_t sequenceId = nextTxSequenceId++;
+  if(nextTxSequenceId == 0) nextTxSequenceId = 1;
+  return sequenceId;
+}
+
 bool sendPing(unsigned long now){
   char packet[Config::Esp8266MaxPacketSize + 1] = {};
-  if(PacketBuilder::ping(packet, sizeof(packet)) == 0) return false;
+  if(PacketBuilder::ping(packet, sizeof(packet), nextSequenceId()) == 0) return false;
   if(!sendPacket(packet)) return false;
   heartbeat.markPingSent(now);
   CONTROL_LOG_INFO(LogTag::HEARTBEAT, "ping");
@@ -69,7 +77,8 @@ bool sendPing(unsigned long now){
 
 bool sendFullSync(unsigned long now){
   char packet[Config::Esp8266MaxPacketSize + 1] = {};
-  if(PacketBuilder::fullSync(packet, sizeof(packet), SystemStateStore::current()) == 0){
+  lastSyncSequenceId = nextSequenceId();
+  if(PacketBuilder::fullSync(packet, sizeof(packet), SystemStateStore::current(), lastSyncSequenceId) == 0){
     transitionTo(Esp8266ConnectionState::Error);
     return false;
   }
@@ -132,6 +141,8 @@ void handleParsedPacket(Esp32ProtocolParser::Packet &packet, unsigned long now){
   if(Esp32ProtocolParser::equals(command, "SYNC_OK")){
     heartbeat.recordPong(now);
     synchronization.complete();
+    SystemStateStore::markProtocolSynced(SystemStateStore::revision(), lastSyncSequenceId);
+    observedStateRevision = SystemStateStore::revision();
     transitionTo(Esp8266ConnectionState::Running);
     CONTROL_LOG_INFO(LogTag::SYNC, "sync ok");
     return;
@@ -255,12 +266,6 @@ void supervise(unsigned long now){
   }
 }
 
-void markDirtyOnRevisionChange(uint32_t beforeRevision){
-  if(SystemStateStore::revision() != beforeRevision){
-    requestSyncFromCurrentState();
-  }
-}
-
 }  // namespace
 
 namespace Esp8266Link {
@@ -295,37 +300,6 @@ bool isRunning() {
 
 Esp8266ConnectionState state() {
   return connectionState;
-}
-
-bool setRelay(uint8_t relayNumber, bool enabled){
-  const uint32_t before = SystemStateStore::revision();
-  if(!SystemStateStore::setRelay(relayNumber, enabled)) return false;
-  markDirtyOnRevisionChange(before);
-  return true;
-}
-
-void setLedsEnabled(bool enabled){
-  const uint32_t before = SystemStateStore::revision();
-  SystemStateStore::setLedsEnabled(enabled);
-  markDirtyOnRevisionChange(before);
-}
-
-void setBrightnessLevel(uint8_t level){
-  const uint32_t before = SystemStateStore::revision();
-  SystemStateStore::setBrightnessLevel(level);
-  markDirtyOnRevisionChange(before);
-}
-
-void setIdlePreset(LedIdlePreset preset){
-  const uint32_t before = SystemStateStore::revision();
-  SystemStateStore::setIdlePreset(preset);
-  markDirtyOnRevisionChange(before);
-}
-
-void setLedMode(LedState mode){
-  const uint32_t before = SystemStateStore::revision();
-  SystemStateStore::setLedMode(mode);
-  markDirtyOnRevisionChange(before);
 }
 
 void requestFullSync(){

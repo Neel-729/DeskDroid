@@ -35,6 +35,10 @@ class PacketDispatcher {
   bool parseRelayNumber(const char* value, uint8_t& relayNumber) const;
   bool parseByte(const char* value, uint8_t& result) const;
   bool parseEffect(const char* value, LedEffect& effect) const;
+  const char* sequenceToken(const Packet& packet) const;
+  void sendAckWithSequence(const char* command, const char* sequenceToken);
+  void sendPongWithSequence(const char* sequenceToken);
+  void sendSyncOkWithSequence(const char* sequenceToken);
   bool equals(const char* lhs, const char* rhs) const;
 
   Stream& stream_;

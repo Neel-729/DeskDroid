@@ -1,10 +1,9 @@
 #include "hardware_requests.h"
 
 #include "../core/logging.h"
-#include "../protocol/esp8266_link.h"
+#include "../core/system_state.h"
 #include "../drivers/buzzer_driver.h"
 #include "../drivers/lcd_driver.h"
-#include "../drivers/neopixel_driver.h"
 
 namespace {
 
@@ -51,8 +50,7 @@ void execute(const HardwareCommand &command){
       break;
 
     case HardwareCommandType::LED_MODE:
-      NeoPixelDriver::setState((LedState)command.value);
-      Esp8266Link::setLedMode((LedState)command.value);
+      SystemStateStore::setLedMode((LedState)command.value);
       LOG_INFO(
         LogTag::LED,
         "Mode requested %u seq=%u src=%s age=%lums",
@@ -64,13 +62,11 @@ void execute(const HardwareCommand &command){
       break;
 
     case HardwareCommandType::IDLE_PRESET:
-      NeoPixelDriver::setIdlePreset((LedIdlePreset)command.value);
-      Esp8266Link::setIdlePreset((LedIdlePreset)command.value);
+      SystemStateStore::setIdlePreset((LedIdlePreset)command.value);
       break;
 
     case HardwareCommandType::LED_BRIGHTNESS:
-      NeoPixelDriver::setBrightnessLevel((uint8_t)command.value);
-      Esp8266Link::setBrightnessLevel((uint8_t)command.value);
+      SystemStateStore::setBrightnessLevel((uint8_t)command.value);
       break;
 
     case HardwareCommandType::BACKLIGHT:
@@ -87,7 +83,7 @@ void beginLocal(const DeviceSettings &settings){
   LcdDriver::begin();
   LcdDriver::createBlockChar();
   BuzzerDriver::begin();
-  NeoPixelDriver::begin(settings.ledBrightness, settings.idlePreset);
+  (void)settings;
 }
 
 void requestBeep(uint16_t durationMs, CommandSource source){
@@ -158,8 +154,7 @@ void serviceBuzzer(){
 }
 
 void updateLeds(bool lightsAllowed){
-  NeoPixelDriver::update(lightsAllowed);
-  Esp8266Link::setLedsEnabled(lightsAllowed);
+  SystemStateStore::setLightingScheduleAllowed(lightsAllowed);
 }
 
 void clearDisplay(){

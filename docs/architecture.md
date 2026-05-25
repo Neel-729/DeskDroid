@@ -1,22 +1,151 @@
-# DeskDroid Architecture
+# DeskDroid API-First Architecture
 
-DeskDroid is migrating toward a dual-MCU architecture.
+DeskDroid is a dual-MCU firmware with a strict control-plane/execution-plane split.
 
-- ESP32: main controller, UI, input, automation, source-of-truth state.
-- ESP8266: output processor for relays, NeoPixels, UART command handling, and output synchronization.
+```text
+UI
+  |
+Application commands
+  |
+Canonical SystemState
+  |
+Services
+  |
+ESP8266 protocol transport
+  |
+Hardware execution
+```
 
-The first migration milestone keeps the ESP8266 additive and non-destructive.
+## Module Ownership
 
-## Control Plane Runtime
+ESP32 owns UI, navigation, command validation, canonical state, WiFi, OTA-ready settings, reminders, timers, persistence, automation, and ESP8266 orchestration.
 
-The ESP32 owns canonical runtime state and supervises the ESP8266 execution plane through a centralized `Esp8266Link` transport. No application or feature module should access `Serial2` directly.
+ESP8266 owns LED rendering, animation runtime, relay output application, deterministic frame timing, heartbeat responses, command queueing, and mirrored execution state. It must not make product decisions such as when an alarm starts, which animation means timer done, or whether settings are valid.
 
-Startup and recovery flow:
+## Refactored Folder Structure
 
-1. ESP8266 emits `<BOOT_READY>`.
-2. ESP32 transitions to `SYNCING`.
-3. ESP32 sends an authoritative `<FULL_SYNC|...>` packet.
-4. ESP8266 applies mirror state and emits `<SYNC_OK>`.
-5. ESP32 transitions to `RUNNING`.
+```text
+firmware/esp32/src/
+  app/
+    application.cpp
+    application_commands.{h,cpp}
+    settings_flow.{h,cpp}
+  core/
+    events.{h,cpp}
+    system_state.{h,cpp}
+    settings_store.{h,cpp}
+  services/
+    audio_service.{h,cpp}
+    connectivity_service.{h,cpp}
+    lighting_service.{h,cpp}
+    protocol_service.{h,cpp}
+    settings_service.{h,cpp}
+    timer_service.{h,cpp}
+    services.{h,cpp}
+  protocol/
+    esp8266_link.{h,cpp}
+    packet_builder.{h,cpp}
+    synchronization_manager.{h,cpp}
+  ui/
+    screens.{h,cpp}
 
-If heartbeat supervision times out, the ESP32 marks the execution plane disconnected, preserves authoritative state, and waits for either `<BOOT_READY>` or a heartbeat response before resynchronizing.
+firmware/esp8266/src/
+  protocol/
+  state/
+  led/
+  relay/
+  system/
+```
+
+## State Flow
+
+Example: brightness change.
+
+1. UI edits `LED Brightness` in `SettingsFlow`.
+2. `SettingsFlow` calls `AppCommands::setBrightnessLevel`.
+3. `SystemStateStore` updates `SystemState.lighting.brightness`.
+4. `SystemStateStore` emits `EVENT_STATE_CHANGED` with `StateChange::Lighting`.
+5. `ProtocolService` requests an ESP8266 state sync.
+6. `Esp8266Link` sends `<FULL_SYNC|SEQ=n|...|BR=value|...>`.
+7. ESP8266 applies the mirror state and replies `<SYNC_OK|SEQ=n>`.
+8. ESP32 records the confirmed protocol revision in `SystemState.protocol`.
+9. UI reads canonical state through feature/screen data, not through drivers.
+
+## Command/API Layer
+
+All frontends must call `AppCommands`, including the physical UI today and serial, mobile, backend, or OTA integrations later.
+
+Implemented command entry points include:
+
+- `setBrightness(uint8_t)`
+- `setBrightnessLevel(uint8_t)`
+- `setAnimationMode(AnimationMode)`
+- `setColor(RGBColor)`
+- `setLedMode(LedState)`
+- `setIdlePreset(LedIdlePreset)`
+- `startTimer(uint32_t)`
+- `pauseTimer(uint32_t)`
+- `stopTimer()`
+- `resetTimer()`
+- `setTimerDuration(uint32_t)`
+- `setReminder(...)`
+- `syncClock(...)`
+- `setVolume(uint8_t)`
+- `setMuted(bool)`
+- `connectWifi(...)`
+- `applySettings(...)`
+- `saveSettings(...)`
+
+## Service Layer
+
+- `LightingService`: converts settings and time schedule into canonical lighting/backlight state.
+- `TimerService`: updates timer completion and reacts to timer events.
+- `AudioService`: owns buzzer execution and respects canonical audio state.
+- `ConnectivityService`: mirrors WiFi status into `SystemState.connectivity`.
+- `SettingsService`: persistence facade around settings load/save.
+- `ProtocolService`: owns ESP8266 synchronization requests and link status.
+
+The ESP32 local hardware request queue is now limited to ESP32-local hardware such as LCD and buzzer. It no longer renders NeoPixels or calls protocol mutators directly.
+
+## ESP8266 Protocol Architecture
+
+`Esp8266Link` is the transport/synchronization layer. It handles packet framing, sequence IDs for heartbeat/sync packets, heartbeat supervision, retry timing, reconnect, timeout recovery, and authoritative full-state synchronization.
+
+The ESP8266 command queue still serializes execution-plane packet handling. It accepts compatible old packets plus sequenced packets for `PING` and `FULL_SYNC`, and it echoes `SEQ=` in `PONG`, `ACK`, and `SYNC_OK` responses when present.
+
+## Anti-Patterns Found
+
+- Timer state lived in private feature globals.
+- Settings UI directly requested LED protocol/hardware changes.
+- ESP32 hardware request execution touched NeoPixel rendering and ESP8266 link mutators.
+- Protocol layer exposed state mutation functions instead of behaving as transport.
+- UI/application logic triggered buzzer hardware requests directly in many handlers.
+- Canonical state only covered a small LED/relay subset.
+
+## Migration Strategy
+
+1. Keep existing UI screens stable while redirecting writes through `AppCommands`.
+2. Move feature globals into `SystemState` one domain at a time.
+3. Let services subscribe to `EVENT_STATE_CHANGED`.
+4. Keep ESP8266 as a mirror-only execution engine.
+5. Add serialization and diff sync on top of `SystemState` revisions.
+6. Migrate future serial/mobile/backend commands to `AppCommands` without new business logic.
+7. Remove unused legacy ESP32 NeoPixel driver files after hardware validation confirms LED output is fully delegated.
+
+## Example API Usage
+
+```cpp
+AppCommands::setBrightnessLevel(7);
+AppCommands::setColor(RGBColor(255, 40, 0));
+AppCommands::setAnimationMode(AnimationMode::Breathing);
+AppCommands::startTimer(millis());
+AppCommands::saveSettings(SettingsFlow::settings());
+```
+
+## Suggested Refactors
+
+- Add unit-style host tests for `SystemStateStore` mutators and event emission.
+- Add protocol tests for `SEQ=` ACK/NACK and retry behavior.
+- Move reminders into a `ReminderState` domain next.
+- Replace full sync with revisioned diffs after beta hardware is stable.
+- Remove ESP32 NeoPixel dependency from `platformio.ini` once the legacy driver is deleted.

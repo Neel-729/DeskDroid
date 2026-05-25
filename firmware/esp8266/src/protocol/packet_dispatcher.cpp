@@ -75,28 +75,28 @@ void PacketDispatcher::handleFullSync(const Packet& packet) {
   relayManager_.update();
   ledEngine_.applyState();
   runtime_.completeSync();
-  stream_.println(F("<SYNC_OK>"));
+  sendSyncOkWithSequence(sequenceToken(packet));
   Logger::info(stream_, F("[SYNC]"), F("full sync applied"));
 }
 
 void PacketDispatcher::handlePing(const Packet& packet) {
-  if (packet.tokenCount != 1) {
+  if (packet.tokenCount > 2) {
     sendError(ProtocolError::InvalidPacket);
     return;
   }
 
   runtime_.recordHeartbeat();
-  stream_.println(F("<PONG>"));
+  sendPongWithSequence(sequenceToken(packet));
 }
 
 void PacketDispatcher::handleHeartbeat(const Packet& packet) {
-  if (packet.tokenCount != 1) {
+  if (packet.tokenCount > 2) {
     sendError(ProtocolError::InvalidPacket);
     return;
   }
 
   runtime_.recordHeartbeat();
-  ProtocolResponse::sendAck(stream_, packet.command());
+  sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
 void PacketDispatcher::handleSetRelay(const Packet& packet) {
@@ -127,7 +127,7 @@ void PacketDispatcher::handleSetRelay(const Packet& packet) {
   }
 
   runtime_.recordHeartbeat();
-  ProtocolResponse::sendAck(stream_, packet.command());
+  sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
 void PacketDispatcher::handleSetColor(const Packet& packet) {
@@ -147,7 +147,7 @@ void PacketDispatcher::handleSetColor(const Packet& packet) {
 
   ledEngine_.setSolidColor(r, g, b);
   runtime_.recordHeartbeat();
-  ProtocolResponse::sendAck(stream_, packet.command());
+  sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
 void PacketDispatcher::handleClearLeds(const Packet& packet) {
@@ -158,7 +158,7 @@ void PacketDispatcher::handleClearLeds(const Packet& packet) {
 
   ledEngine_.clear();
   runtime_.recordHeartbeat();
-  ProtocolResponse::sendAck(stream_, packet.command());
+  sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
 void PacketDispatcher::handleSetBrightness(const Packet& packet) {
@@ -175,7 +175,7 @@ void PacketDispatcher::handleSetBrightness(const Packet& packet) {
 
   ledEngine_.setBrightness(brightness);
   runtime_.recordHeartbeat();
-  ProtocolResponse::sendAck(stream_, packet.command());
+  sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
 void PacketDispatcher::handleSetEffect(const Packet& packet) {
@@ -192,7 +192,7 @@ void PacketDispatcher::handleSetEffect(const Packet& packet) {
 
   ledEngine_.setEffect(effect);
   runtime_.recordHeartbeat();
-  ProtocolResponse::sendAck(stream_, packet.command());
+  sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
 bool PacketDispatcher::parseRelayNumber(const char* value, uint8_t& relayNumber) const {
@@ -246,6 +246,50 @@ bool PacketDispatcher::parseEffect(const char* value, LedEffect& effect) const {
     return true;
   }
   return false;
+}
+
+const char* PacketDispatcher::sequenceToken(const Packet& packet) const {
+  for (uint8_t i = 1; i < packet.tokenCount; ++i) {
+    if (strncmp(packet.tokens[i], "SEQ=", 4) == 0) {
+      return packet.tokens[i] + 4;
+    }
+  }
+  return nullptr;
+}
+
+void PacketDispatcher::sendAckWithSequence(const char* command, const char* sequence) {
+  if (sequence == nullptr) {
+    ProtocolResponse::sendAck(stream_, command);
+    return;
+  }
+
+  stream_.print(F("<ACK|"));
+  stream_.print(command);
+  stream_.print(F("|SEQ="));
+  stream_.print(sequence);
+  stream_.println(F(">"));
+}
+
+void PacketDispatcher::sendPongWithSequence(const char* sequence) {
+  if (sequence == nullptr) {
+    stream_.println(F("<PONG>"));
+    return;
+  }
+
+  stream_.print(F("<PONG|SEQ="));
+  stream_.print(sequence);
+  stream_.println(F(">"));
+}
+
+void PacketDispatcher::sendSyncOkWithSequence(const char* sequence) {
+  if (sequence == nullptr) {
+    stream_.println(F("<SYNC_OK>"));
+    return;
+  }
+
+  stream_.print(F("<SYNC_OK|SEQ="));
+  stream_.print(sequence);
+  stream_.println(F(">"));
 }
 
 bool PacketDispatcher::equals(const char* lhs, const char* rhs) const {

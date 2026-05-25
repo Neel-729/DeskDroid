@@ -3,6 +3,7 @@
 #include <esp_system.h>
 #include <Arduino.h>
 
+#include "application_commands.h"
 #include "hardware_requests.h"
 #include "input_service.h"
 #include "navigation.h"
@@ -15,11 +16,13 @@
 #include "../core/system_state.h"
 #include "../core/time_service.h"
 #include "../features/clock.h"
-#include "../features/lighting.h"
 #include "../features/reminders.h"
 #include "../features/stopwatch.h"
 #include "../features/timer.h"
-#include "../protocol/esp8266_link.h"
+#include "../services/audio_service.h"
+#include "../services/lighting_service.h"
+#include "../services/services.h"
+#include "../services/timer_service.h"
 #include "../ui/screens.h"
 
 namespace {
@@ -32,7 +35,6 @@ void runBuzzerTask(FrameContext &context);
 void runEsp8266LinkTask(FrameContext &context);
 void runHardwareRequestTask(FrameContext &context);
 void runLightingTask(FrameContext &context);
-void runLedTask(FrameContext &context);
 void runTimerTask(FrameContext &context);
 void runReminderCheckTask(FrameContext &context);
 void runReminderAlarmTask(FrameContext &context);
@@ -50,7 +52,6 @@ ScheduledTask scheduledTasks[] = {
   { "buzzer", 5, 0, 0, 250, 0, 0, true, runBuzzerTask },
   { "hardware", 0, 0, 0, 1500, 0, 0, true, runHardwareRequestTask },
   { "lighting", 1000, 0, 0, 1500, 0, 0, true, runLightingTask },
-  { "led", 30, 0, 0, 7000, 0, 0, true, runLedTask },
   { "timer", 50, 0, 0, 1000, 0, 0, true, runTimerTask },
   { "reminder-check", 1000, 0, 0, 2500, 0, 0, true, runReminderCheckTask },
   { "reminder-alarm", 50, 0, 0, 1000, 0, 0, true, runReminderAlarmTask },
@@ -72,7 +73,7 @@ bool bootAnimation(unsigned long now){
 
   if(stage==0){
     UiScreens::renderBootTitle(FIRMWARE_VERSION);
-    HardwareRequests::requestBeep(50, CommandSource::SYSTEM);
+    AudioService::beep(50);
     HardwareRequests::executePending();
     lastStep=now;
     stage=1;
@@ -82,8 +83,8 @@ bool bootAnimation(unsigned long now){
     if(now-lastStep>150){
       UiScreens::renderBootScreen(FIRMWARE_VERSION, frames[stage-1]);
       lastStep=now;
-      if(stage==6) HardwareRequests::requestBeep(50, CommandSource::SYSTEM);
-      if(stage==8) HardwareRequests::requestBeep(50, CommandSource::SYSTEM);
+      if(stage==6) AudioService::beep(50);
+      if(stage==8) AudioService::beep(50);
       HardwareRequests::executePending();
       stage++;
     }
@@ -102,7 +103,6 @@ void initHardware(){
   SettingsFlow::begin();
   SystemStateStore::begin(SettingsFlow::settings());
   HardwareRequests::beginLocal(SettingsFlow::settings());
-  Esp8266Link::begin();
 
   if(!TimeService::begin()){
     UiScreens::renderRtcErrorScreen();
@@ -113,9 +113,9 @@ void initHardware(){
     TimeService::adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
+  Services::begin(SettingsFlow::settings());
   InputService::begin();
-  LightingFeature::begin(SettingsFlow::settings());
-  HardwareRequests::requestBacklight(LightingFeature::backlightEnabled(SettingsFlow::settings()), CommandSource::SYSTEM);
+  HardwareRequests::requestBacklight(SystemStateStore::current().lighting.backlightEnabled, CommandSource::SYSTEM);
   HardwareRequests::executePending();
 
   RemindersFeature::load();
@@ -141,7 +141,7 @@ void updateBlinkState(unsigned long now){
 
 void startReminderAlarm(uint8_t idx, unsigned long now){
   AppNavigation::setResumeAfterReminder(AppNavigation::current());
-  LightingFeature::requestMode(LED_REMINDER_ALARM);
+  AppCommands::setLedMode(LED_REMINDER_ALARM);
   RemindersFeature::startAlarm(idx, now);
   AppNavigation::enter(STATE_REMINDER_ALARM);
 }
@@ -149,7 +149,7 @@ void startReminderAlarm(uint8_t idx, unsigned long now){
 void stopReminderAlarm(){
   AppState resumeState = AppNavigation::resumeAfterReminder();
   RemindersFeature::stopAlarm();
-  LightingFeature::requestMode(resumeState==STATE_TIMER_ALARM ? LED_TIMER_ALARM : LED_IDLE);
+  AppCommands::setLedMode(resumeState==STATE_TIMER_ALARM ? LED_TIMER_ALARM : LED_IDLE);
   AppNavigation::enter(resumeState);
 }
 
@@ -160,12 +160,12 @@ void checkReminders(){
 void updateReminderAlarm(unsigned long now){
   if(AppNavigation::current()!=STATE_REMINDER_ALARM) return;
   if(RemindersFeature::updateAlarm(now)){
-    HardwareRequests::requestBeep(80, CommandSource::REMINDER);
+    AudioService::beep(80);
   }
 }
 
 void resetTimerAlarm(bool restoreDuration){
-  LightingFeature::requestMode(LED_IDLE);
+  AppCommands::setLedMode(LED_IDLE);
   TimerFeature::stopAlarm(restoreDuration);
   AppNavigation::enter(STATE_TIMER_VIEW);
 }
@@ -181,8 +181,7 @@ void handleEvent(const AppEvent &event, unsigned long now){
 
   switch(ev){
     case EVENT_TIMER_DONE:
-      LightingFeature::requestMode(LED_TIMER_ALARM);
-      TimerFeature::startAlarm(now);
+      AppCommands::setLedMode(LED_TIMER_ALARM);
       AppNavigation::enter(STATE_TIMER_ALARM);
       return;
 
@@ -217,18 +216,18 @@ void handleEvent(const AppEvent &event, unsigned long now){
       case STATE_REMINDER_LIST:
         RemindersFeature::rotateSelected(step);
         AppNavigation::markChanged();
-        if(settings.buzzer) HardwareRequests::requestBeep(20, CommandSource::INPUTS);
+        AudioService::beep(20);
         break;
 
       case STATE_REMINDER_EDIT:
         RemindersFeature::adjustSelected(step);
         RemindersFeature::save();
         AppNavigation::markChanged();
-        if(settings.buzzer) HardwareRequests::requestBeep(20, CommandSource::INPUTS);
+        AudioService::beep(20);
         break;
 
       case STATE_TIMER_EDIT:
-        TimerFeature::adjustEdit(step);
+        AppCommands::adjustTimerEdit(step);
         AppNavigation::markChanged();
         break;
 
@@ -246,7 +245,7 @@ void handleEvent(const AppEvent &event, unsigned long now){
       case STATE_REMINDER_HOME:
       case STATE_SETTINGS_HOME:
         AppNavigation::rotateMainState(step);
-        if(settings.buzzer) HardwareRequests::requestBeep(20, CommandSource::INPUTS);
+        AudioService::beep(20);
         break;
 
       default:
@@ -262,14 +261,14 @@ void handleEvent(const AppEvent &event, unsigned long now){
 
       case STATE_TIMER_VIEW:
         if(TimerFeature::isRunning()){
-          TimerFeature::pause(now);
+          AppCommands::pauseTimer(now);
         } else {
-          TimerFeature::start(now);
+          AppCommands::startTimer(now);
         }
         break;
 
       case STATE_TIMER_EDIT:
-        TimerFeature::advanceEditField();
+        AppCommands::advanceTimerEditField();
         AppNavigation::markChanged();
         break;
 
@@ -310,7 +309,7 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
     }
 
-    if(settings.buzzer) HardwareRequests::requestBeep(40, CommandSource::INPUTS);
+    AudioService::beep(40);
   }
 
   if(ev==EVENT_DOUBLE_CLICK){
@@ -322,7 +321,7 @@ void handleEvent(const AppEvent &event, unsigned long now){
 
       case STATE_REMINDER_LIST:
         AppNavigation::enter(STATE_REMINDER_HOME);
-        if(settings.buzzer) HardwareRequests::requestBeep(80, CommandSource::INPUTS);
+        AudioService::beep(80);
         break;
 
       case STATE_SETTINGS_EDIT:
@@ -340,13 +339,13 @@ void handleEvent(const AppEvent &event, unsigned long now){
       case STATE_TIMER_VIEW:
       case STATE_TIMER_EDIT:
       case STATE_TIMER_ALARM:
-        TimerFeature::reset();
+        AppCommands::resetTimer();
         resetTimerAlarm(false);
         break;
 
       case STATE_STOPWATCH:
         StopwatchFeature::reset();
-        if(settings.buzzer) HardwareRequests::requestBeep(120, CommandSource::INPUTS);
+        AudioService::beep(120);
         break;
 
       default:
@@ -382,14 +381,14 @@ void handleEvent(const AppEvent &event, unsigned long now){
       case STATE_SETTINGS_MENU:
       case STATE_SETTINGS_HOME:
         SettingsFlow::save();
-        LightingFeature::refresh(settings);
+        LightingService::refreshSchedule(settings);
         SettingsFlow::exitToClock();
         break;
 
       default:
         break;
     }
-    if(settings.buzzer) HardwareRequests::requestBeep(120, CommandSource::INPUTS);
+    AudioService::beep(120);
   }
 }
 
@@ -398,6 +397,7 @@ bool processEvents(unsigned long now){
   AppEvent event;
   while(dequeueEvent(event)){
     processed = true;
+    Services::handleEvent(event, now);
     handleEvent(event, now);
   }
   return processed;
@@ -451,12 +451,11 @@ UiScreens::RemindersScreenData remindersScreenData(){
 
 void runBuzzerTask(FrameContext &context){
   (void)context;
-  HardwareRequests::serviceBuzzer();
+  AudioService::service();
 }
 
 void runEsp8266LinkTask(FrameContext &context){
-  (void)context;
-  Esp8266Link::update();
+  Services::update(context.nowMs);
 }
 
 void runHardwareRequestTask(FrameContext &context){
@@ -467,38 +466,20 @@ void runHardwareRequestTask(FrameContext &context){
 void runLightingTask(FrameContext &context){
   (void)context;
   DeviceSettings &settings = SettingsFlow::settings();
-  LightingFeature::refreshSchedule(settings);
-  HardwareRequests::requestBacklight(LightingFeature::backlightEnabled(settings), CommandSource::LIGHTING);
-}
-
-void runLedTask(FrameContext &context){
-  (void)context;
-  static bool initialized = false;
-  static LedState appliedMode = LED_IDLE;
-
-  const LedState requestedMode = LightingFeature::requestedMode();
-  if(!initialized || systemContext.lighting.driverModeDirty || requestedMode != appliedMode){
-    HardwareRequests::requestLedMode(requestedMode, CommandSource::LIGHTING);
-    appliedMode = requestedMode;
-    initialized = true;
-    systemContext.lighting.driverModeDirty = false;
-    HardwareRequests::executePending();
-  }
-
-  HardwareRequests::updateLeds(LightingFeature::allowsOutput());
+  LightingService::refreshSchedule(settings);
 }
 
 void runTimerTask(FrameContext &context){
   const unsigned long now = context.nowMs;
 
   if(AppNavigation::current()==STATE_TIMER_ALARM && TimerFeature::shouldAlarmBeep(now)){
-    HardwareRequests::requestBeep(200, CommandSource::TIMER);
+    AudioService::beep(200);
   }
   if(AppNavigation::current()==STATE_TIMER_ALARM && TimerFeature::alarmTimedOut(now)){
     enqueueTimerEvent(EVENT_TIMER_ALARM_TIMEOUT);
   }
 
-  checkTimerDone(now);
+  TimerService::update(now);
 }
 
 void runReminderCheckTask(FrameContext &context){
@@ -615,7 +596,7 @@ void setup(){
   while(!bootAnimation(millis())){
     flushUiFrame();
     HardwareRequests::executePending();
-    HardwareRequests::serviceBuzzer();
+    AudioService::service();
   }
   flushUiFrame();
 

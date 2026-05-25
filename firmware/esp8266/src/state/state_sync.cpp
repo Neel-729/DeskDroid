@@ -36,7 +36,9 @@ SyncParseResult StateSync::parseFullSync(const Packet& packet, StateSnapshot& sn
     const char* value = separator + 1;
 
     bool boolValue = false;
-    if (equals(key, "R1")) {
+    if (equals(key, "SEQ")) {
+      continue;
+    } else if (equals(key, "R1")) {
       if (!parseBool(value, boolValue)) return SyncParseResult::Invalid;
       snapshot.relayStates[0] = boolValue;
       fieldsSeen |= FieldR1;
@@ -162,4 +164,3 @@ bool StateSync::parseEffect(const char* value, LedEffect& effect) const {
 bool StateSync::equals(const char* lhs, const char* rhs) const {
   return strcmp(lhs, rhs) == 0;
 }
-

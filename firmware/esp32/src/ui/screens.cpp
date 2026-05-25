@@ -116,35 +116,43 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
     }
 
-    case 3:
+    case 3:{
+      char relayBuf[17];
+      snprintf(relayBuf,sizeof(relayBuf),"Relay %d",renderState.relayIndex + 1);
+      writeRow(0,relayBuf);
+      writeRow(1,renderState.relayEnabled?"ON":"OFF");
+      break;
+    }
+
+    case 4:
       writeRow(0,"Auto Lights");
       writeRow(1,settings.autoLights?"ON":"OFF");
       break;
 
-    case 4:
+    case 5:
       renderLightScheduleEdit("Lights On",settings.lightsOnHour,settings.lightsOnMinute,renderState.blinkState,renderState.scheduleHourSelected);
       break;
 
-    case 5:
+    case 6:
       renderLightScheduleEdit("Lights Off",settings.lightsOffHour,settings.lightsOffMinute,renderState.blinkState,renderState.scheduleHourSelected);
       break;
 
-    case 6:
+    case 7:
       writeRow(0,"Buzzer");
       writeRow(1,settings.buzzer?"ON":"OFF");
       break;
 
-    case 7:
+    case 8:
       writeRow(0,"Quotes");
       writeRow(1,settings.quotes?"ON":"OFF");
       break;
 
-    case 8:
+    case 9:
       writeRow(0,"Time Format");
       writeRow(1,settings.format24?"24H":"12H");
       break;
 
-    case 9:{
+    case 10:{
       int h=renderState.adjustHour;
       int m=renderState.adjustMinute;
       if(!renderState.blinkState){
@@ -164,7 +172,7 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
     }
 
-    case 10:{
+    case 11:{
       int d=renderState.adjustDay;
       int mo=renderState.adjustMonth;
       int y=renderState.adjustYear;
@@ -189,7 +197,7 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
     }
 
-    case 11:
+    case 12:
       writeRow(0,"DeskDroid");
       char versionBuf[17];
       snprintf(versionBuf,sizeof(versionBuf),"v%s",renderState.firmwareVersion);

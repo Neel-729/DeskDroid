@@ -25,6 +25,8 @@ struct Snapshot {
   uint8_t adjustMonth;
   uint8_t adjustDay;
   uint8_t adjustDateField;
+  uint8_t relayIndex;
+  bool relayEnabled;
 };
 
 void begin();

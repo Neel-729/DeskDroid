@@ -75,6 +75,15 @@ bool enqueueReminderEvent(EventType type, uint8_t index){
   return enqueueEvent(event);
 }
 
+bool enqueueStateChangedEvent(uint16_t changeMask, uint32_t revision){
+  AppEvent event = {};
+  event.type = EVENT_STATE_CHANGED;
+  event.source = EventSource::SYSTEM;
+  event.payload.state.changeMask = changeMask;
+  event.payload.state.revision = revision;
+  return enqueueEvent(event);
+}
+
 bool dequeueEvent(AppEvent &event){
   if(eventQueueTail == eventQueueHead) return false;
 

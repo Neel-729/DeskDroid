@@ -1,10 +1,11 @@
 #include "settings_flow.h"
 
-#include "hardware_requests.h"
+#include "application_commands.h"
 #include "navigation.h"
+#include "../core/system_state.h"
 #include "../core/time_service.h"
 #include "../features/clock.h"
-#include "../features/lighting.h"
+#include "../services/lighting_service.h"
 #include "../utils/date_utils.h"
 
 namespace {
@@ -15,6 +16,7 @@ const char* settingsMenu[]={
   "Backlight",
   "LED Mode",
   "LED Brightness",
+  "Relays",
   "Auto Lights",
   "Lights On",
   "Lights Off",
@@ -29,6 +31,7 @@ const char* settingsMenu[]={
 const uint8_t SETTINGS_COUNT = sizeof(settingsMenu)/sizeof(settingsMenu[0]);
 
 uint8_t settingsIndex=0;
+uint8_t relayIndex=0;
 uint8_t adjustHour=0;
 uint8_t adjustMinute=0;
 bool adjustHourField=true;
@@ -73,7 +76,7 @@ DeviceSettings &settings(){
 }
 
 void save(){
-  SettingsStore::saveDeviceSettings(deviceSettings);
+  AppCommands::saveSettings(deviceSettings);
 }
 
 void rotateMenu(int step){
@@ -87,12 +90,12 @@ void rotateMenu(int step){
 void beginEdit(){
   resetEditModes();
 
-  if(settingsIndex==9){
+  if(settingsIndex==10){
     DateTime n=TimeService::now();
     adjustHour=n.hour();
     adjustMinute=n.minute();
   }
-  else if(settingsIndex==10){
+  else if(settingsIndex==11){
     DateTime n=TimeService::now();
     adjustYear=n.year();
     adjustMonth=n.month();
@@ -103,7 +106,7 @@ void beginEdit(){
 }
 
 void adjustValue(int step){
-  if(settingsIndex==4){
+  if(settingsIndex==5){
     if(scheduleEditField==SCHEDULE_HOUR){
       int h = (int)deviceSettings.lightsOnHour + step;
       if(h < 0) h = 23;
@@ -115,9 +118,10 @@ void adjustValue(int step){
       if(m > 59) m = 0;
       deviceSettings.lightsOnMinute = (uint8_t)m;
     }
-    LightingFeature::refresh(deviceSettings);
+    AppCommands::applySettings(deviceSettings);
+    LightingService::refreshSchedule(deviceSettings);
   }
-  else if(settingsIndex==5){
+  else if(settingsIndex==6){
     if(scheduleEditField==SCHEDULE_HOUR){
       int h = (int)deviceSettings.lightsOffHour + step;
       if(h < 0) h = 23;
@@ -129,13 +133,14 @@ void adjustValue(int step){
       if(m > 59) m = 0;
       deviceSettings.lightsOffMinute = (uint8_t)m;
     }
-    LightingFeature::refresh(deviceSettings);
+    AppCommands::applySettings(deviceSettings);
+    LightingService::refreshSchedule(deviceSettings);
   }
-  else if(settingsIndex==9){
+  else if(settingsIndex==10){
     if(adjustHourField) adjustHour=(adjustHour+step+24)%24;
     else adjustMinute=(adjustMinute+step+60)%60;
   }
-  else if(settingsIndex==10){
+  else if(settingsIndex==11){
     if(adjustDateField==DATE_DAY){
       int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth);
       int d = (int)adjustDay + step;
@@ -162,41 +167,64 @@ void adjustValue(int step){
   }
   else if(settingsIndex==0){
     deviceSettings.brightness = !deviceSettings.brightness;
-    LightingFeature::refresh(deviceSettings);
+    AppCommands::applySettings(deviceSettings);
+    LightingService::refreshSchedule(deviceSettings);
   }
   else if(settingsIndex==1){
     int val = deviceSettings.idlePreset + step;
     if(val < 0) val = IDLE_PULSE;
     if(val > IDLE_PULSE) val = IDLE_OFF;
     deviceSettings.idlePreset = val;
-    HardwareRequests::requestIdlePreset((LedIdlePreset)val, CommandSource::SETTINGS);
+    AppCommands::applySettings(deviceSettings);
+    AppCommands::setIdlePreset((LedIdlePreset)val);
   }
   else if(settingsIndex==2){
     int val = deviceSettings.ledBrightness + step;
     if(val < 0) val = 0;
     if(val > 10) val = 10;
     deviceSettings.ledBrightness = val;
-    HardwareRequests::requestLedBrightness(deviceSettings.ledBrightness, CommandSource::SETTINGS);
+    AppCommands::applySettings(deviceSettings);
+    AppCommands::setBrightnessLevel(deviceSettings.ledBrightness);
   }
   else if(settingsIndex==3){
-    deviceSettings.autoLights=!deviceSettings.autoLights;
-    LightingFeature::refresh(deviceSettings);
+    int nextRelay = (int)relayIndex + step;
+    if(nextRelay < 0) nextRelay = SystemState::RelayCount - 1;
+    if(nextRelay >= SystemState::RelayCount) nextRelay = 0;
+    relayIndex = (uint8_t)nextRelay;
   }
-  else if(settingsIndex==6) deviceSettings.buzzer=!deviceSettings.buzzer;
-  else if(settingsIndex==7) deviceSettings.quotes=!deviceSettings.quotes;
-  else if(settingsIndex==8) deviceSettings.format24=!deviceSettings.format24;
+  else if(settingsIndex==4){
+    deviceSettings.autoLights=!deviceSettings.autoLights;
+    AppCommands::applySettings(deviceSettings);
+    LightingService::refreshSchedule(deviceSettings);
+  }
+  else if(settingsIndex==7) {
+    deviceSettings.buzzer=!deviceSettings.buzzer;
+    AppCommands::applySettings(deviceSettings);
+  }
+  else if(settingsIndex==8) {
+    deviceSettings.quotes=!deviceSettings.quotes;
+    AppCommands::applySettings(deviceSettings);
+  }
+  else if(settingsIndex==9) {
+    deviceSettings.format24=!deviceSettings.format24;
+    AppCommands::applySettings(deviceSettings);
+  }
 
   AppNavigation::markChanged();
 }
 
 void advanceField(){
-  if(settingsIndex==4 || settingsIndex==5){
+  if(settingsIndex==5 || settingsIndex==6){
     scheduleEditField = (scheduleEditField==SCHEDULE_HOUR) ? SCHEDULE_MINUTE : SCHEDULE_HOUR;
   }
-  else if(settingsIndex==9){
-    adjustHourField=!adjustHourField;
+  else if(settingsIndex==3){
+    const bool enabled = SystemStateStore::current().relayStates[relayIndex];
+    AppCommands::setRelay(relayIndex + 1, !enabled);
   }
   else if(settingsIndex==10){
+    adjustHourField=!adjustHourField;
+  }
+  else if(settingsIndex==11){
     if(adjustDateField==DATE_DAY) adjustDateField=DATE_MONTH;
     else if(adjustDateField==DATE_MONTH) adjustDateField=DATE_YEAR;
     else adjustDateField=DATE_DAY;
@@ -208,19 +236,19 @@ void advanceField(){
 }
 
 void commitEdit(unsigned long now){
-  if(settingsIndex==9){
+  if(settingsIndex==10){
     DateTime current = TimeService::now();
     TimeService::adjust(DateTime(current.year(),current.month(),current.day(),adjustHour,adjustMinute,0));
     ClockFeature::syncToRtc(now);
   }
-  else if(settingsIndex==10){
+  else if(settingsIndex==11){
     DateTime current = TimeService::now();
     TimeService::adjust(DateTime(adjustYear,adjustMonth,adjustDay,current.hour(),current.minute(),0));
     ClockFeature::syncToRtc(now);
   }
 
   save();
-  LightingFeature::refresh(deviceSettings);
+  LightingService::refreshSchedule(deviceSettings);
   resetEditModes();
   AppNavigation::enter(STATE_SETTINGS_MENU);
 }
@@ -236,7 +264,7 @@ void exitToClock(){
 }
 
 bool shouldBlink(){
-  return settingsIndex==4 || settingsIndex==5 || settingsIndex==9 || settingsIndex==10;
+  return settingsIndex==5 || settingsIndex==6 || settingsIndex==10 || settingsIndex==11;
 }
 
 Snapshot snapshot(const char* firmwareVersion, bool blinkState){
@@ -252,7 +280,9 @@ Snapshot snapshot(const char* firmwareVersion, bool blinkState){
     adjustYear,
     adjustMonth,
     adjustDay,
-    (uint8_t)adjustDateField
+    (uint8_t)adjustDateField,
+    relayIndex,
+    SystemStateStore::current().relayStates[relayIndex]
   };
   return current;
 }

@@ -27,8 +27,9 @@ size_t checkedSnprintf(char* buffer, size_t bufferSize, const char* format, ...)
 
 }  // namespace
 
-size_t ping(char* buffer, size_t bufferSize) {
-  return checkedSnprintf(buffer, bufferSize, "<PING>");
+size_t ping(char* buffer, size_t bufferSize, uint16_t sequenceId) {
+  if(sequenceId == 0) return checkedSnprintf(buffer, bufferSize, "<PING>");
+  return checkedSnprintf(buffer, bufferSize, "<PING|SEQ=%u>", sequenceId);
 }
 
 size_t setRelay(char* buffer, size_t bufferSize, uint8_t relayNumber, bool enabled) {
@@ -47,21 +48,22 @@ size_t setEffect(char* buffer, size_t bufferSize, EffectType effect) {
   return checkedSnprintf(buffer, bufferSize, "<SET_EFFECT|%s>", effectName(effect));
 }
 
-size_t fullSync(char* buffer, size_t bufferSize, const SystemState &state) {
+size_t fullSync(char* buffer, size_t bufferSize, const SystemState &state, uint16_t sequenceId) {
   return checkedSnprintf(
     buffer,
     bufferSize,
-    "<FULL_SYNC|R1=%u|R2=%u|R3=%u|R4=%u|BR=%u|FX=%s|CR=%u,%u,%u|LED=%u>",
+    "<FULL_SYNC|SEQ=%u|R1=%u|R2=%u|R3=%u|R4=%u|BR=%u|FX=%s|CR=%u,%u,%u|LED=%u>",
+    sequenceId,
     state.relayStates[0] ? 1 : 0,
     state.relayStates[1] ? 1 : 0,
     state.relayStates[2] ? 1 : 0,
     state.relayStates[3] ? 1 : 0,
-    state.brightness,
-    effectName(state.currentEffect),
-    state.currentColor.r,
-    state.currentColor.g,
-    state.currentColor.b,
-    state.ledsEnabled ? 1 : 0
+    state.lighting.brightness,
+    effectName(state.lighting.mode),
+    state.lighting.color.r,
+    state.lighting.color.g,
+    state.lighting.color.b,
+    state.lighting.enabled && state.lighting.scheduleAllowsOutput ? 1 : 0
   );
 }
 

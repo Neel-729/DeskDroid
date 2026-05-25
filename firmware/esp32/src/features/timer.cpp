@@ -3,122 +3,121 @@
 #include "../core/events.h"
 
 namespace {
-int timerHours=0;
-int timerMinutes=5;
-int timerSeconds=0;
 
-unsigned long timerEndTime=0;
-unsigned long timerRemainingMillis=0;
-unsigned long timerTotalMillis=0;
-
-bool timerRunning=false;
-
-unsigned long lastAlarmBeep=0;
-unsigned long alarmStartTime=0;
-
-TimerEditField timerEditField=EDIT_MINUTES;
-
-void recalculateTotal(){
-  timerTotalMillis=((unsigned long)timerHours*3600UL+(unsigned long)timerMinutes*60UL+(unsigned long)timerSeconds)*1000UL;
-  if(timerTotalMillis==0) timerTotalMillis=1000;
+uint8_t adjustedFieldValue(uint8_t value, int step, uint8_t maxValue){
+  int adjusted = static_cast<int>(value) + step;
+  if(adjusted < 0) adjusted = 0;
+  if(adjusted > maxValue) adjusted = maxValue;
+  return static_cast<uint8_t>(adjusted);
 }
-}
+
+}  // namespace
 
 namespace TimerFeature {
 
 void begin(){
-  recalculateTotal();
-  timerRemainingMillis=timerTotalMillis;
+  const TimerState &timer = SystemStateStore::current().timer;
+  SystemStateStore::setTimerClockFields(timer.hours, timer.minutes, timer.seconds);
 }
 
 void start(unsigned long now){
-  timerEndTime=now+timerRemainingMillis;
-  timerRunning=true;
+  SystemStateStore::startTimer(now);
 }
 
 void pause(unsigned long now){
-  timerRemainingMillis=(now>=timerEndTime)?0:timerEndTime-now;
-  timerRunning=false;
+  SystemStateStore::pauseTimer(now);
 }
 
 void reset(){
-  timerRunning=false;
-  timerRemainingMillis=timerTotalMillis;
+  SystemStateStore::resetTimer();
 }
 
 void checkDone(unsigned long now){
-  if(!timerRunning) return;
-  if(now<timerEndTime) return;
+  const TimerState &timer = SystemStateStore::current().timer;
+  if(!timer.active) return;
+  if(now < timer.endsAtMs) {
+    SystemStateStore::updateTimerRemaining(now);
+    return;
+  }
 
   if(enqueueTimerEvent(EVENT_TIMER_DONE)){
-    timerRunning=false;
-    timerRemainingMillis=0;
+    SystemStateStore::completeTimer(now);
   }
 }
 
 bool isRunning(){
-  return timerRunning;
+  return SystemStateStore::current().timer.active;
 }
 
 unsigned long remainingMillis(unsigned long now){
-  if(timerRunning){
-    return (now>=timerEndTime)?0:timerEndTime-now;
+  const TimerState &timer = SystemStateStore::current().timer;
+  if(timer.active){
+    return now >= timer.endsAtMs ? 0 : timer.endsAtMs - now;
   }
-  return timerRemainingMillis;
+  return timer.remainingMs;
 }
 
 unsigned long totalMillis(){
-  return timerTotalMillis;
+  return SystemStateStore::current().timer.durationMs;
 }
 
 uint8_t hours(){
-  return timerHours;
+  return SystemStateStore::current().timer.hours;
 }
 
 uint8_t minutes(){
-  return timerMinutes;
+  return SystemStateStore::current().timer.minutes;
 }
 
 uint8_t seconds(){
-  return timerSeconds;
+  return SystemStateStore::current().timer.seconds;
 }
 
 void adjustEdit(int step){
-  if(timerEditField==EDIT_HOURS) timerHours = constrain(timerHours + step,0,99);
-  else if(timerEditField==EDIT_MINUTES) timerMinutes = constrain(timerMinutes + step,0,59);
-  else timerSeconds = constrain(timerSeconds + step,0,59);
+  const TimerState &timer = SystemStateStore::current().timer;
+  uint8_t nextHours = timer.hours;
+  uint8_t nextMinutes = timer.minutes;
+  uint8_t nextSeconds = timer.seconds;
 
-  recalculateTotal();
-  timerRemainingMillis=timerTotalMillis;
+  if(timer.editField == EDIT_HOURS){
+    nextHours = adjustedFieldValue(timer.hours, step, 99);
+  } else if(timer.editField == EDIT_MINUTES){
+    nextMinutes = adjustedFieldValue(timer.minutes, step, 59);
+  } else {
+    nextSeconds = adjustedFieldValue(timer.seconds, step, 59);
+  }
+
+  SystemStateStore::setTimerClockFields(nextHours, nextMinutes, nextSeconds);
 }
 
 void advanceEditField(){
-  if(timerEditField==EDIT_HOURS) timerEditField=EDIT_MINUTES;
-  else if(timerEditField==EDIT_MINUTES) timerEditField=EDIT_SECONDS;
-  else timerEditField=EDIT_HOURS;
+  const TimerEditField field = SystemStateStore::current().timer.editField;
+  if(field == EDIT_HOURS) SystemStateStore::setTimerEditField(EDIT_MINUTES);
+  else if(field == EDIT_MINUTES) SystemStateStore::setTimerEditField(EDIT_SECONDS);
+  else SystemStateStore::setTimerEditField(EDIT_HOURS);
 }
 
 TimerEditField editField(){
-  return timerEditField;
+  return SystemStateStore::current().timer.editField;
 }
 
 void startAlarm(unsigned long now){
-  alarmStartTime=now;
-  lastAlarmBeep=0;
+  SystemStateStore::startTimerAlarm(now);
 }
 
 void stopAlarm(bool restoreDuration){
-  if(restoreDuration) timerRemainingMillis=timerTotalMillis;
+  SystemStateStore::stopTimerAlarm(restoreDuration);
 }
 
 bool shouldAlarmBeep(unsigned long now){
-  if(now-lastAlarmBeep<=1200) return false;
-  lastAlarmBeep=now;
+  const TimerState &timer = SystemStateStore::current().timer;
+  if(now - timer.lastAlarmBeepMs <= 1200) return false;
+  SystemStateStore::markTimerAlarmBeep(now);
   return true;
 }
 
 bool alarmTimedOut(unsigned long now){
-  return now-alarmStartTime>30000;
+  return now - SystemStateStore::current().timer.alarmStartedAtMs > 30000;
 }
 
 }
