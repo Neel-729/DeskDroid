@@ -107,7 +107,9 @@ void initHardware(){
   if(!TimeService::begin()){
     UiScreens::renderRtcErrorScreen();
     flushUiFrame();
-    while(true);
+    while(true){
+      delay(100);
+    }
   }
   if(!TimeService::isRunning()){
     TimeService::adjust(DateTime(F(__DATE__), F(__TIME__)));
@@ -610,6 +612,7 @@ void setup(){
 
 void loop(){
   scheduler.run(millis());
+  delay(1);
 }
 
 }

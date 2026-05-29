@@ -45,4 +45,5 @@ void loop() {
   ledEngine.update();
   runtime.update();
   watchdog.update();
+  yield();
 }
