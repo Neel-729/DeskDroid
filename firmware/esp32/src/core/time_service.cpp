@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include "fault_tracker.h"
 #include "../drivers/rtc_driver.h"
 
 namespace {
@@ -21,6 +22,9 @@ bool begin(){
   fallbackBase = DateTime(F(__DATE__), F(__TIME__));
   fallbackBaseMs = millis();
   rtcAvailable = RtcDriver::begin();
+  if(!rtcAvailable){
+    FaultTracker::record(FaultSource::Driver, FaultCode::DriverFailure, "rtc_unavailable", millis());
+  }
   return true;
 }
 

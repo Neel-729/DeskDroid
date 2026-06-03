@@ -13,6 +13,7 @@ class CommandQueue {
   void begin();
   bool enqueue(const char* packetPayload);
   void update();
+  void clear();
 
   uint8_t size() const;
   bool full() const;
@@ -29,4 +30,3 @@ class CommandQueue {
   uint8_t tail_ = 0;
   uint8_t size_ = 0;
 };
-

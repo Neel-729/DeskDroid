@@ -10,6 +10,7 @@
 #include "settings_flow.h"
 #include "system_context.h"
 #include "../core/events.h"
+#include "../core/fault_tracker.h"
 #include "../core/logging.h"
 #include "../core/scheduler.h"
 #include "../core/settings_store.h"
@@ -19,6 +20,8 @@
 #include "../features/reminders.h"
 #include "../features/stopwatch.h"
 #include "../features/timer.h"
+#include "../protocol/esp8266_link.h"
+#include "../protocol/uart_monitor.h"
 #include "../services/audio_service.h"
 #include "../services/lighting_service.h"
 #include "../services/services.h"
@@ -46,6 +49,7 @@ void flushUiFrame();
 UiScreens::TimerScreenData timerScreenData(unsigned long now);
 UiScreens::StopwatchScreenData stopwatchScreenData();
 UiScreens::RemindersScreenData remindersScreenData();
+void logTaskRuntimeProfiles();
 
 ScheduledTask scheduledTasks[] = {
   { "esp8266-link", 0, 0, 0, 1200, 0, 0, true, runEsp8266LinkTask },
@@ -99,6 +103,7 @@ bool bootAnimation(unsigned long now){
 
 void initHardware(){
   Serial.begin(115200);
+  FaultTracker::begin();
   SettingsStore::begin();
   SettingsFlow::begin();
   SystemStateStore::begin(SettingsFlow::settings());
@@ -565,14 +570,16 @@ void runDiagnosticsTask(FrameContext &context){
   const SchedulerStats &schedulerStats = scheduler.stats();
   const HardwareRequestStats &hardwareStats = HardwareRequests::stats();
   const EventQueueStats &eventStats = eventQueueStats();
+  const FaultSnapshot &faults = FaultTracker::snapshot();
+  const FaultRecord &lastFault = faults.lastFault;
+  const Esp8266LinkDiagnostics &link = Esp8266Link::diagnostics();
+  const UartMonitorStats &uart = UartTrafficMonitor::stats();
 
   LOG_INFO(
     LogTag::APP,
-    "sched loops=%lu tasks=%lu overruns=%u maxLoop=%luus events q=%lu d=%lu drop=%u max=%u seq=%u hw q=%lu x=%lu drop=%u max=%u seq=%u age=%lums",
+    "sched loops=%lu tasks=%lu events q=%lu d=%lu drop=%u max=%u seq=%u hw q=%lu x=%lu drop=%u max=%u seq=%u age=%lums",
     (unsigned long)schedulerStats.loopCount,
     (unsigned long)schedulerStats.taskRunCount,
-    schedulerStats.overrunCount,
-    (unsigned long)schedulerStats.maxLoopRuntimeUs,
     (unsigned long)eventStats.queued,
     (unsigned long)eventStats.dequeued,
     eventStats.dropped,
@@ -585,6 +592,89 @@ void runDiagnosticsTask(FrameContext &context){
     hardwareStats.lastSequenceId,
     (unsigned long)hardwareStats.maxCommandAgeMs
   );
+
+  LOG_INFO(
+    LogTag::APP,
+    "OVERRUN count=%u task=%s runtime=%luus budget=%luus at=%lums maxLoopActual=%luus",
+    schedulerStats.overrunCount,
+    schedulerStats.lastOverrunTaskName != nullptr ? schedulerStats.lastOverrunTaskName : "none",
+    (unsigned long)schedulerStats.lastOverrunRuntimeUs,
+    (unsigned long)schedulerStats.lastOverrunBudgetUs,
+    (unsigned long)schedulerStats.lastOverrunTimestampMs,
+    (unsigned long)schedulerStats.maxLoopRuntimeUs
+  );
+
+  logTaskRuntimeProfiles();
+
+  LOG_INFO(
+    LogTag::APP,
+    "fault state=%s retry=%u recover=%u reset=%u syncReason=%s last=%s/%s repeat=%u reason=%s counters link=%lu proto=%lu sched=%lu hw=%lu drv=%lu uart tx=%lu/%luB rx=%lu/%luB crc=%lu to=%lu resync=%lu malformed=%lu",
+    Esp8266Link::stateName(link.state),
+    link.retryCount,
+    link.recoveryAttemptCount,
+    link.transportResetCount,
+    link.lastSyncReason,
+    FaultTracker::sourceName(lastFault.source),
+    FaultTracker::codeName(lastFault.code),
+    lastFault.repeatCount,
+    link.lastRecoveryReason,
+    (unsigned long)faults.counters.link,
+    (unsigned long)faults.counters.protocol,
+    (unsigned long)faults.counters.schedulerOverrun,
+    (unsigned long)faults.counters.hardwareRequest,
+    (unsigned long)faults.counters.driver,
+    (unsigned long)uart.txPackets,
+    (unsigned long)uart.txBytes,
+    (unsigned long)uart.rxPackets,
+    (unsigned long)uart.rxBytes,
+    (unsigned long)uart.crcErrors,
+    (unsigned long)uart.timeoutErrors,
+    (unsigned long)uart.resyncCount,
+    (unsigned long)uart.malformedPackets
+  );
+}
+
+void logTaskRuntimeProfiles(){
+  constexpr uint8_t TopTaskLimit = 10;
+  constexpr uint8_t MaxProfileTasks = 16;
+  bool selected[MaxProfileTasks] = {};
+  const uint8_t count = scheduler.taskCount();
+  const uint8_t limit = count < TopTaskLimit ? count : TopTaskLimit;
+
+  for(uint8_t rank = 0; rank < limit; ++rank){
+    uint8_t bestIndex = 0;
+    unsigned long bestRuntimeUs = 0;
+    bool found = false;
+
+    for(uint8_t i = 0; i < count && i < MaxProfileTasks; ++i){
+      if(selected[i]) continue;
+      const ScheduledTask &task = scheduler.taskAt(i);
+      if(!found || task.maxRuntimeUs > bestRuntimeUs){
+        bestRuntimeUs = task.maxRuntimeUs;
+        bestIndex = i;
+        found = true;
+      }
+    }
+
+    if(!found) break;
+    selected[bestIndex] = true;
+
+    const ScheduledTask &task = scheduler.taskAt(bestIndex);
+    const unsigned long avgRuntimeUs =
+      task.runCount == 0 ? 0 : (unsigned long)(task.totalRuntimeUs / task.runCount);
+    LOG_INFO(
+      LogTag::APP,
+      "[TASK] %s avg=%luus max=%luus last=%luus total=%lluus runs=%lu overruns=%u budget=%luus",
+      task.name,
+      (unsigned long)avgRuntimeUs,
+      (unsigned long)task.maxRuntimeUs,
+      (unsigned long)task.lastRuntimeUs,
+      (unsigned long long)task.totalRuntimeUs,
+      (unsigned long)task.runCount,
+      task.overrunCount,
+      (unsigned long)task.budgetUs
+    );
+  }
 }
 
 }

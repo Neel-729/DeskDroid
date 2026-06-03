@@ -50,3 +50,6 @@ bool SynchronizationManager::retryLimitReached() const {
   return retries_ >= Config::Esp8266MaxSyncRetries;
 }
 
+uint8_t SynchronizationManager::retries() const {
+  return retries_;
+}

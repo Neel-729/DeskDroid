@@ -13,6 +13,7 @@ class SynchronizationManager {
   void complete();
   void reset();
   bool retryLimitReached() const;
+  uint8_t retries() const;
 
  private:
   bool pending_ = false;
@@ -20,4 +21,3 @@ class SynchronizationManager {
   uint8_t retries_ = 0;
   unsigned long lastAttemptMs_ = 0;
 };
-

@@ -13,6 +13,7 @@ class Protocol {
 
   void begin();
   void update();
+  void reset();
 
  private:
   void resetPacket();

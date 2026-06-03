@@ -5,9 +5,7 @@
 CommandQueue::CommandQueue(PacketDispatcher& dispatcher) : dispatcher_(dispatcher) {}
 
 void CommandQueue::begin() {
-  head_ = 0;
-  tail_ = 0;
-  size_ = 0;
+  clear();
 }
 
 bool CommandQueue::enqueue(const char* packetPayload) {
@@ -32,6 +30,8 @@ void CommandQueue::update() {
       dispatcher_.dispatch(packet);
     } else {
       dispatcher_.sendError(ProtocolError::InvalidPacket);
+      clear();
+      return;
     }
 
     queue_[head_].payload[0] = '\0';
@@ -41,6 +41,15 @@ void CommandQueue::update() {
   }
 }
 
+void CommandQueue::clear() {
+  for (uint8_t i = 0; i < Config::CommandQueueSize; ++i) {
+    queue_[i].payload[0] = '\0';
+  }
+  head_ = 0;
+  tail_ = 0;
+  size_ = 0;
+}
+
 uint8_t CommandQueue::size() const {
   return size_;
 }
@@ -48,4 +57,3 @@ uint8_t CommandQueue::size() const {
 bool CommandQueue::full() const {
   return size_ >= Config::CommandQueueSize;
 }
-

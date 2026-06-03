@@ -9,6 +9,8 @@ void Runtime::begin() {
   const uint32_t now = millis();
   bootMs_ = now;
   lastHeartbeatMs_ = now;
+  stateChangedAtMs_ = now;
+  recoveryCount_ = 0;
   state_ = RuntimeState::Booting;
 }
 
@@ -38,6 +40,7 @@ void Runtime::recordHeartbeat() {
 }
 
 void Runtime::beginSync() {
+  lastHeartbeatMs_ = millis();
   transitionTo(RuntimeState::Syncing);
 }
 
@@ -50,6 +53,12 @@ void Runtime::failSync() {
   if (state_ == RuntimeState::Syncing) {
     transitionTo(RuntimeState::WaitingForSync);
   }
+}
+
+void Runtime::recoverFromStall() {
+  lastHeartbeatMs_ = millis();
+  if(recoveryCount_ < 65535) recoveryCount_++;
+  transitionTo(RuntimeState::WaitingForSync);
 }
 
 RuntimeState Runtime::state() const {
@@ -73,12 +82,21 @@ uint32_t Runtime::lastHeartbeatMs() const {
   return lastHeartbeatMs_;
 }
 
+uint32_t Runtime::stateChangedAtMs() const {
+  return stateChangedAtMs_;
+}
+
+uint16_t Runtime::recoveryCount() const {
+  return recoveryCount_;
+}
+
 void Runtime::transitionTo(RuntimeState state) {
   if (state_ == state) {
     return;
   }
 
   state_ = state;
+  stateChangedAtMs_ = millis();
   Logger::info(stream_, F("[SYSTEM]"), stateName(state_));
 }
 

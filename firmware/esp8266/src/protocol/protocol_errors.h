@@ -9,5 +9,6 @@ enum class ProtocolError : uint8_t {
   UnknownCommand,
   InvalidArgument,
   InvalidSync,
+  SyncTimeout,
+  RuntimeStalled,
 };
-

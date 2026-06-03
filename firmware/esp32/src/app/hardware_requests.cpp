@@ -1,5 +1,6 @@
 #include "hardware_requests.h"
 
+#include "../core/fault_tracker.h"
 #include "../core/logging.h"
 #include "../core/system_state.h"
 #include "../drivers/buzzer_driver.h"
@@ -110,6 +111,7 @@ bool enqueue(const HardwareCommand &command){
   uint8_t nextHead = (commandHead + 1) % COMMAND_QUEUE_SIZE;
   if(nextHead == commandTail){
     requestStats.dropped++;
+    FaultTracker::record(FaultSource::Hardware, FaultCode::HardwareQueueFull, "hardware_queue_full", millis());
     if(Log::shouldLog(droppedCommandLog, 2000, millis())){
       LOG_WARN(LogTag::APP, "Hardware command queue full, dropped=%u", requestStats.dropped);
     }

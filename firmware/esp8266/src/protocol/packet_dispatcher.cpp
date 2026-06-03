@@ -65,6 +65,7 @@ void PacketDispatcher::dispatch(const Packet& packet) {
 void PacketDispatcher::handleFullSync(const Packet& packet) {
   StateSnapshot snapshot;
   if (stateSync_.parseFullSync(packet, snapshot) != SyncParseResult::Ok) {
+    runtime_.failSync();
     sendError(ProtocolError::InvalidSync);
     return;
   }

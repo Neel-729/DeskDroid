@@ -1,5 +1,4 @@
 #include <Arduino.h>
-
 #include "config.h"
 #include "led/led_engine.h"
 #include "protocol/command_queue.h"
@@ -31,7 +30,7 @@ void setup() {
   ledEngine.begin();
   heartbeat.begin();
   runtime.begin();
-  watchdog.begin();
+  watchdog.begin(runtime, protocol, commandQueue, Serial);
 
   Serial.println(F("<BOOT_READY>"));
   runtime.markBootReadySent();

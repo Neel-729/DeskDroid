@@ -28,10 +28,13 @@ const __FlashStringHelper* errorText(ProtocolError error) {
       return F("INVALID_ARGUMENT");
     case ProtocolError::InvalidSync:
       return F("INVALID_SYNC");
+    case ProtocolError::SyncTimeout:
+      return F("SYNC_TIMEOUT");
+    case ProtocolError::RuntimeStalled:
+      return F("RUNTIME_STALLED");
   }
 
   return F("UNKNOWN_ERROR");
 }
 
 }  // namespace ProtocolResponse
-

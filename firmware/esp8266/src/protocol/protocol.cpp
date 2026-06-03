@@ -22,6 +22,10 @@ void Protocol::update() {
   }
 }
 
+void Protocol::reset() {
+  resetPacket();
+}
+
 void Protocol::resetPacket() {
   packetLength_ = 0;
   packet_[0] = '\0';
@@ -53,12 +57,14 @@ void Protocol::consume(char c) {
 
   if (packetLength_ >= Config::MaxPacketSize) {
     resetPacket();
+    commandQueue_.clear();
     ProtocolResponse::sendError(stream_, ProtocolError::PacketTooLong);
     return;
   }
 
   if (!isAllowedPacketChar(c)) {
     resetPacket();
+    commandQueue_.clear();
     ProtocolResponse::sendError(stream_, ProtocolError::InvalidPacket);
     return;
   }
@@ -75,6 +81,8 @@ void Protocol::processPacket() {
   Packet packet;
   const ParseResult result = parser_.parse(validationBuffer, packet);
   if (result != ParseResult::Ok) {
+    resetPacket();
+    commandQueue_.clear();
     ProtocolResponse::sendError(stream_, ProtocolError::InvalidPacket);
     return;
   }
