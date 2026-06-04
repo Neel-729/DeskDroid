@@ -16,6 +16,7 @@
 #include "../core/settings_store.h"
 #include "../core/system_state.h"
 #include "../core/time_service.h"
+#include "../drivers/lcd_driver.h"
 #include "../features/clock.h"
 #include "../features/reminders.h"
 #include "../features/stopwatch.h"
@@ -50,6 +51,8 @@ UiScreens::TimerScreenData timerScreenData(unsigned long now);
 UiScreens::StopwatchScreenData stopwatchScreenData();
 UiScreens::RemindersScreenData remindersScreenData();
 void logTaskRuntimeProfiles();
+void logTaskRuntimeRanking(uint8_t metric);
+void logOverrunAttributionSummary();
 
 ScheduledTask scheduledTasks[] = {
   { "esp8266-link", 0, 0, 0, 1200, 0, 0, true, runEsp8266LinkTask },
@@ -566,7 +569,6 @@ void runUiTask(FrameContext &context){
 }
 
 void runDiagnosticsTask(FrameContext &context){
-  (void)context;
   const SchedulerStats &schedulerStats = scheduler.stats();
   const HardwareRequestStats &hardwareStats = HardwareRequests::stats();
   const EventQueueStats &eventStats = eventQueueStats();
@@ -595,16 +597,63 @@ void runDiagnosticsTask(FrameContext &context){
 
   LOG_INFO(
     LogTag::APP,
-    "OVERRUN count=%u task=%s runtime=%luus budget=%luus at=%lums maxLoopActual=%luus",
-    schedulerStats.overrunCount,
+    "OVERRUN count=%lu task=%s runtime=%luus budget=%luus excess=%luus at=%lums maxLoopActual=%luus",
+    (unsigned long)schedulerStats.overrunCount,
     schedulerStats.lastOverrunTaskName != nullptr ? schedulerStats.lastOverrunTaskName : "none",
     (unsigned long)schedulerStats.lastOverrunRuntimeUs,
     (unsigned long)schedulerStats.lastOverrunBudgetUs,
+    (unsigned long)schedulerStats.lastOverrunExcessUs,
     (unsigned long)schedulerStats.lastOverrunTimestampMs,
     (unsigned long)schedulerStats.maxLoopRuntimeUs
   );
 
+  const LcdDriver::TimingStats &lcdTiming = LcdDriver::timingStats();
+  LOG_INFO(
+    LogTag::APP,
+    "LCD_TIMING clear=%luus row1=%luus row2=%luus frame=%luus setCursor=%luus print=%luus write=%luus maxFrame=%luus ops clear=%lu frame=%lu cursor=%u print=%u write=%u chars=%u rows=%u skipped=%u runs=%u/%u",
+    (unsigned long)lcdTiming.clearUs,
+    (unsigned long)lcdTiming.row1Us,
+    (unsigned long)lcdTiming.row2Us,
+    (unsigned long)lcdTiming.frameUs,
+    (unsigned long)lcdTiming.setCursorUs,
+    (unsigned long)lcdTiming.printUs,
+    (unsigned long)lcdTiming.writeUs,
+    (unsigned long)lcdTiming.maxFrameUs,
+    (unsigned long)lcdTiming.clearCount,
+    (unsigned long)lcdTiming.frameUpdateCount,
+    (unsigned)lcdTiming.lastFrameSetCursorOps,
+    (unsigned)lcdTiming.lastFramePrintOps,
+    (unsigned)lcdTiming.lastFrameWriteOps,
+    (unsigned)lcdTiming.lastFrameChangedChars,
+    (unsigned)lcdTiming.lastFrameRowsChanged,
+    (unsigned)lcdTiming.lastFrameRowsSkipped,
+    (unsigned)lcdTiming.lastRow1Runs,
+    (unsigned)lcdTiming.lastRow2Runs
+  );
+
+  LOG_INFO(
+    LogTag::APP,
+    "LED_STATE desired=%s/%u/%u/%u sent=%s/%u/%u/%u pending=%s/%u/%u/%u status=%s retry=%u ackAge=%lums err=%s",
+    link.desiredLedMode,
+    link.desiredLedPower ? 1 : 0,
+    link.desiredLedBrightness,
+    link.desiredLedSpeed,
+    link.lastSentLedMode,
+    link.lastSentLedPower ? 1 : 0,
+    link.lastSentLedBrightness,
+    link.lastSentLedSpeed,
+    link.pendingLedMode,
+    link.pendingLedPower ? 1 : 0,
+    link.pendingLedBrightness,
+    link.pendingLedSpeed,
+    Esp8266Link::ledStatusName(link.ledStatus),
+    link.ledRetryCount,
+    link.lastLedAckMs == 0 ? 0UL : (unsigned long)(context.nowMs - link.lastLedAckMs),
+    link.lastLedErrReason
+  );
+
   logTaskRuntimeProfiles();
+  logOverrunAttributionSummary();
 
   LOG_INFO(
     LogTag::APP,
@@ -635,6 +684,36 @@ void runDiagnosticsTask(FrameContext &context){
 }
 
 void logTaskRuntimeProfiles(){
+  logTaskRuntimeRanking(0);
+  logTaskRuntimeRanking(1);
+  logTaskRuntimeRanking(2);
+}
+
+uint64_t taskMetricValue(const ScheduledTask &task, uint8_t metric){
+  switch(metric){
+    case 0:
+      return task.maxRuntimeUs;
+    case 1:
+      return task.runCount == 0 ? 0 : task.totalRuntimeUs / task.runCount;
+    case 2:
+      return task.totalRuntimeUs;
+  }
+  return 0;
+}
+
+const char* taskMetricName(uint8_t metric){
+  switch(metric){
+    case 0:
+      return "max";
+    case 1:
+      return "avg";
+    case 2:
+      return "total";
+  }
+  return "unknown";
+}
+
+void logTaskRuntimeRanking(uint8_t metric){
   constexpr uint8_t TopTaskLimit = 10;
   constexpr uint8_t MaxProfileTasks = 16;
   bool selected[MaxProfileTasks] = {};
@@ -643,14 +722,15 @@ void logTaskRuntimeProfiles(){
 
   for(uint8_t rank = 0; rank < limit; ++rank){
     uint8_t bestIndex = 0;
-    unsigned long bestRuntimeUs = 0;
+    uint64_t bestValue = 0;
     bool found = false;
 
     for(uint8_t i = 0; i < count && i < MaxProfileTasks; ++i){
       if(selected[i]) continue;
       const ScheduledTask &task = scheduler.taskAt(i);
-      if(!found || task.maxRuntimeUs > bestRuntimeUs){
-        bestRuntimeUs = task.maxRuntimeUs;
+      const uint64_t value = taskMetricValue(task, metric);
+      if(!found || value > bestValue){
+        bestValue = value;
         bestIndex = i;
         found = true;
       }
@@ -664,17 +744,57 @@ void logTaskRuntimeProfiles(){
       task.runCount == 0 ? 0 : (unsigned long)(task.totalRuntimeUs / task.runCount);
     LOG_INFO(
       LogTag::APP,
-      "[TASK] %s avg=%luus max=%luus last=%luus total=%lluus runs=%lu overruns=%u budget=%luus",
+      "[TASK_%s] rank=%u task=%s avg=%luus max=%luus last=%luus total=%lluus runs=%lu overruns=%lu budget=%luus overrunTotal=%lluus overrunExcess=%lluus",
+      taskMetricName(metric),
+      (unsigned)(rank + 1),
       task.name,
       (unsigned long)avgRuntimeUs,
       (unsigned long)task.maxRuntimeUs,
       (unsigned long)task.lastRuntimeUs,
       (unsigned long long)task.totalRuntimeUs,
       (unsigned long)task.runCount,
-      task.overrunCount,
-      (unsigned long)task.budgetUs
+      (unsigned long)task.overrunCount,
+      (unsigned long)task.budgetUs,
+      (unsigned long long)task.totalOverrunRuntimeUs,
+      (unsigned long long)task.totalOverrunExcessUs
     );
   }
+}
+
+void logOverrunAttributionSummary(){
+  const SchedulerStats &schedulerStats = scheduler.stats();
+  if(schedulerStats.overrunCount == 0){
+    LOG_INFO(LogTag::APP, "OVERRUN_ROOT_CAUSE none count=0");
+    return;
+  }
+
+  const ScheduledTask *leader = nullptr;
+  for(uint8_t i = 0; i < scheduler.taskCount(); ++i){
+    const ScheduledTask &task = scheduler.taskAt(i);
+    if(leader == nullptr || task.overrunCount > leader->overrunCount){
+      leader = &task;
+    }
+  }
+
+  if(leader == nullptr){
+    LOG_INFO(LogTag::APP, "OVERRUN_ROOT_CAUSE unknown count=%lu", (unsigned long)schedulerStats.overrunCount);
+    return;
+  }
+
+  const uint32_t countSharePct =
+    (uint32_t)(((uint64_t)leader->overrunCount * 100ULL) / schedulerStats.overrunCount);
+  LOG_INFO(
+    LogTag::APP,
+    "OVERRUN_ROOT_CAUSE task=%s count=%lu share=%lu%% budget=%luus max=%luus avg=%luus overrunTotal=%lluus overrunExcess=%lluus",
+    leader->name,
+    (unsigned long)leader->overrunCount,
+    (unsigned long)countSharePct,
+    (unsigned long)leader->budgetUs,
+    (unsigned long)leader->maxRuntimeUs,
+    (unsigned long)(leader->runCount == 0 ? 0 : leader->totalRuntimeUs / leader->runCount),
+    (unsigned long long)leader->totalOverrunRuntimeUs,
+    (unsigned long long)leader->totalOverrunExcessUs
+  );
 }
 
 }

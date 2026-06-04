@@ -14,10 +14,6 @@ void StateCache::applySnapshot(const StateSnapshot& snapshot) {
   for (uint8_t i = 0; i < Config::RelayCount; ++i) {
     relayStates_[i] = snapshot.relayStates[i];
   }
-  brightness_ = snapshot.brightness;
-  color_ = snapshot.color;
-  activeEffect_ = snapshot.activeEffect;
-  ledsEnabled_ = snapshot.ledsEnabled;
 }
 
 StateSnapshot StateCache::snapshot() const {

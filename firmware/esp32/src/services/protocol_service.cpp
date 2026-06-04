@@ -32,9 +32,8 @@ void update(){
 void handleEvent(const AppEvent &event){
   if(event.type != EVENT_STATE_CHANGED) return;
   const uint16_t mask = event.payload.state.changeMask;
-  const uint16_t lightingMask = static_cast<uint16_t>(StateChange::Lighting);
   const uint16_t protocolMask = static_cast<uint16_t>(StateChange::Protocol);
-  if((mask & (lightingMask | protocolMask)) == 0) return;
+  if((mask & protocolMask) == 0) return;
   if((mask & protocolMask) != 0 &&
      SystemStateStore::current().protocol.lastSyncRevision == SystemStateStore::revision()){
     return;

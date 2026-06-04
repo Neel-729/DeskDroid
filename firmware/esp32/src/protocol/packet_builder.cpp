@@ -48,22 +48,32 @@ size_t setEffect(char* buffer, size_t bufferSize, EffectType effect) {
   return checkedSnprintf(buffer, bufferSize, "<SET_EFFECT|%s>", effectName(effect));
 }
 
+size_t setLedState(char* buffer, size_t bufferSize, const LightingState &state, uint8_t speed, uint16_t sequenceId) {
+  return checkedSnprintf(
+    buffer,
+    bufferSize,
+    "<SET_LED_STATE|SEQ=%u|MODE=%s|BR=%u|SPD=%u|PWR=%u|CR=%u,%u,%u>",
+    sequenceId,
+    effectName(state.mode),
+    state.brightness,
+    speed,
+    state.enabled && state.scheduleAllowsOutput ? 1 : 0,
+    state.color.r,
+    state.color.g,
+    state.color.b
+  );
+}
+
 size_t fullSync(char* buffer, size_t bufferSize, const SystemState &state, uint16_t sequenceId) {
   return checkedSnprintf(
     buffer,
     bufferSize,
-    "<FULL_SYNC|SEQ=%u|R1=%u|R2=%u|R3=%u|R4=%u|BR=%u|FX=%s|CR=%u,%u,%u|LED=%u>",
+    "<FULL_SYNC|SEQ=%u|R1=%u|R2=%u|R3=%u|R4=%u>",
     sequenceId,
     state.relayStates[0] ? 1 : 0,
     state.relayStates[1] ? 1 : 0,
     state.relayStates[2] ? 1 : 0,
-    state.relayStates[3] ? 1 : 0,
-    state.lighting.brightness,
-    effectName(state.lighting.mode),
-    state.lighting.color.r,
-    state.lighting.color.g,
-    state.lighting.color.b,
-    state.lighting.enabled && state.lighting.scheduleAllowsOutput ? 1 : 0
+    state.relayStates[3] ? 1 : 0
   );
 }
 

@@ -15,21 +15,24 @@ struct ScheduledTask {
   unsigned long runCount;
   unsigned long budgetUs;
   unsigned long maxRuntimeUs;
-  uint16_t overrunCount;
+  uint32_t overrunCount;
   bool enabled;
   ScheduledTaskCallback callback;
   unsigned long lastRuntimeUs;
   uint64_t totalRuntimeUs;
+  uint64_t totalOverrunRuntimeUs;
+  uint64_t totalOverrunExcessUs;
 };
 
 struct SchedulerStats {
   uint32_t loopCount;
   uint32_t taskRunCount;
-  uint16_t overrunCount;
+  uint32_t overrunCount;
   unsigned long maxLoopRuntimeUs;
   const char* lastOverrunTaskName;
   unsigned long lastOverrunRuntimeUs;
   unsigned long lastOverrunBudgetUs;
+  unsigned long lastOverrunExcessUs;
   unsigned long lastOverrunTimestampMs;
 };
 

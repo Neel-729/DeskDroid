@@ -164,8 +164,7 @@ void clearDisplay(){
 }
 
 void writeDisplayRows(const char* row0, const char* row1){
-  LcdDriver::writeRow(0, row0);
-  LcdDriver::writeRow(1, row1);
+  LcdDriver::writeFrame(row0, row1);
 }
 
 }

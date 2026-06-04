@@ -8,6 +8,18 @@
 #include "led_effects.h"
 #include "../state/state_cache.h"
 
+struct LedEngineDiagnostics {
+  LedEffect activeEffect = LedEffect::None;
+  bool enabled = false;
+  uint8_t brightness = 0;
+  uint8_t speed = 0;
+  uint32_t animationRuntimeMs = 0;
+  uint32_t lastCommandMs = 0;
+  char lastCommand[16] = "";
+  char lastResult[16] = "";
+  char lastReason[32] = "";
+};
+
 class LedEngine {
  public:
   explicit LedEngine(StateCache& state);
@@ -19,10 +31,15 @@ class LedEngine {
   void setSolidColor(uint8_t r, uint8_t g, uint8_t b);
   void setBrightness(uint8_t brightness);
   void setEffect(LedEffect effect);
+  void applyLedState(LedEffect effect, uint8_t brightness, uint8_t speed, bool enabled, RgbColor color);
   void applyState();
+  void recordCommandResult(const char* command, const char* result, const char* reason);
+  const LedEngineDiagnostics& diagnostics() const;
+  static const char* effectName(LedEffect effect);
 
  private:
   Effect* selectEffect(LedEffect effect);
+  void copyText(char* destination, size_t destinationSize, const char* source);
 
   StateCache& state_;
   Adafruit_NeoPixel pixels_;
@@ -32,4 +49,7 @@ class LedEngine {
   RainbowEffect rainbowEffect_;
   Effect* activeEffect_ = nullptr;
   LedEffect activeEffectId_ = LedEffect::None;
+  uint8_t speed_ = 5;
+  uint32_t effectStartedMs_ = 0;
+  LedEngineDiagnostics diagnostics_;
 };

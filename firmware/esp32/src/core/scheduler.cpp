@@ -1,12 +1,17 @@
 #include "scheduler.h"
 
 #include "fault_tracker.h"
+#include "logging.h"
+
+namespace {
+RateLimitedLog overrunLog;
+}
 
 Scheduler::Scheduler(ScheduledTask tasks[], uint8_t taskCount)
-  : tasks_(tasks), taskCount_(taskCount), stats_({0, 0, 0, 0, nullptr, 0, 0, 0}) {}
+  : tasks_(tasks), taskCount_(taskCount), stats_({0, 0, 0, 0, nullptr, 0, 0, 0, 0}) {}
 
 void Scheduler::reset(unsigned long now){
-  stats_ = {0, 0, 0, 0, nullptr, 0, 0, 0};
+  stats_ = {0, 0, 0, 0, nullptr, 0, 0, 0, 0};
   for(uint8_t i=0;i<taskCount_;i++){
     tasks_[i].lastRunMs = now;
     tasks_[i].runCount = 0;
@@ -14,6 +19,8 @@ void Scheduler::reset(unsigned long now){
     tasks_[i].overrunCount = 0;
     tasks_[i].lastRuntimeUs = 0;
     tasks_[i].totalRuntimeUs = 0;
+    tasks_[i].totalOverrunRuntimeUs = 0;
+    tasks_[i].totalOverrunExcessUs = 0;
   }
 }
 
@@ -41,12 +48,26 @@ void Scheduler::run(unsigned long now){
     task.totalRuntimeUs += runtimeUs;
     if(runtimeUs > task.maxRuntimeUs) task.maxRuntimeUs = runtimeUs;
     if(task.budgetUs != 0 && runtimeUs > task.budgetUs){
+      const unsigned long excessUs = runtimeUs - task.budgetUs;
       task.overrunCount++;
+      task.totalOverrunRuntimeUs += runtimeUs;
+      task.totalOverrunExcessUs += excessUs;
       stats_.overrunCount++;
       stats_.lastOverrunTaskName = task.name;
       stats_.lastOverrunRuntimeUs = runtimeUs;
       stats_.lastOverrunBudgetUs = task.budgetUs;
+      stats_.lastOverrunExcessUs = excessUs;
       stats_.lastOverrunTimestampMs = now;
+      if(Log::shouldLog(overrunLog, 1000, now)){
+        LOG_WARN(
+          LogTag::SCHED,
+          "OVERRUN task=%s runtime=%luus budget=%luus excess=%luus",
+          task.name,
+          (unsigned long)runtimeUs,
+          (unsigned long)task.budgetUs,
+          (unsigned long)excessUs
+        );
+      }
       FaultTracker::record(FaultSource::Scheduler, FaultCode::SchedulerOverrun, task.name, now);
     }
   }

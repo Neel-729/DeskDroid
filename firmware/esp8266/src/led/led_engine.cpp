@@ -1,5 +1,7 @@
 #include "led_engine.h"
 
+#include <string.h>
+
 LedEngine::LedEngine(StateCache& state)
     : state_(state),
       pixels_(Config::NeoPixelCount, Pins::NeoPixelData, NEO_GRB + NEO_KHZ800),
@@ -13,6 +15,7 @@ void LedEngine::begin() {
   pixels_.clear();
   pixels_.show();
   frameScheduler_.begin(Config::LedFrameIntervalMs);
+  effectStartedMs_ = millis();
 }
 
 void LedEngine::update() {
@@ -31,6 +34,7 @@ void LedEngine::clear() {
   state_.setColor(0, 0, 0);
   state_.setActiveEffect(LedEffect::None);
   state_.setLedsEnabled(false);
+  effectStartedMs_ = millis();
 }
 
 void LedEngine::setSolidColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -52,6 +56,60 @@ void LedEngine::setEffect(LedEffect effect) {
   applyState();
 }
 
+void LedEngine::applyLedState(LedEffect effect, uint8_t brightness, uint8_t speed, bool enabled, RgbColor color) {
+  const bool wasEnabled = state_.ledsEnabled();
+  const LedEffect previousEffect = state_.activeEffect();
+  const RgbColor previousColor = state_.color();
+  const bool colorChanged =
+      previousColor.r != color.r || previousColor.g != color.g || previousColor.b != color.b;
+  const bool brightnessChanged = state_.brightness() != brightness;
+  const bool speedChanged = speed_ != speed;
+
+  state_.setBrightness(brightness);
+  state_.setColor(color.r, color.g, color.b);
+  state_.setActiveEffect(effect);
+  state_.setLedsEnabled(enabled && effect != LedEffect::None);
+  speed_ = speed;
+  pixels_.setBrightness(brightness);
+
+  if (!state_.ledsEnabled()) {
+    if (activeEffect_ != nullptr || activeEffectId_ != LedEffect::None || wasEnabled) {
+      activeEffect_ = nullptr;
+      activeEffectId_ = LedEffect::None;
+      pixels_.clear();
+      pixels_.show();
+      effectStartedMs_ = millis();
+    }
+    return;
+  }
+
+  Effect* nextEffect = selectEffect(effect);
+  const bool effectChanged = !wasEnabled || previousEffect != effect || activeEffect_ != nextEffect;
+  activeEffect_ = nextEffect;
+  activeEffectId_ = effect;
+
+  if (activeEffect_ == nullptr) {
+    pixels_.clear();
+    pixels_.show();
+    effectStartedMs_ = millis();
+    return;
+  }
+
+  if (effectChanged) {
+    activeEffect_->begin();
+    effectStartedMs_ = millis();
+    return;
+  }
+
+  if (colorChanged || brightnessChanged || speedChanged) {
+    if (effect == LedEffect::Solid) {
+      activeEffect_->begin();
+    } else {
+      activeEffect_->update();
+    }
+  }
+}
+
 void LedEngine::applyState() {
   pixels_.setBrightness(state_.brightness());
 
@@ -67,7 +125,40 @@ void LedEngine::applyState() {
   activeEffectId_ = state_.activeEffect();
   if (activeEffect_ != nullptr) {
     activeEffect_->begin();
+    effectStartedMs_ = millis();
   }
+}
+
+void LedEngine::recordCommandResult(const char* command, const char* result, const char* reason) {
+  diagnostics_.lastCommandMs = millis();
+  copyText(diagnostics_.lastCommand, sizeof(diagnostics_.lastCommand), command);
+  copyText(diagnostics_.lastResult, sizeof(diagnostics_.lastResult), result);
+  copyText(diagnostics_.lastReason, sizeof(diagnostics_.lastReason), reason);
+}
+
+const LedEngineDiagnostics& LedEngine::diagnostics() const {
+  LedEngine* self = const_cast<LedEngine*>(this);
+  self->diagnostics_.activeEffect = activeEffectId_;
+  self->diagnostics_.enabled = state_.ledsEnabled();
+  self->diagnostics_.brightness = state_.brightness();
+  self->diagnostics_.speed = speed_;
+  self->diagnostics_.animationRuntimeMs =
+      activeEffect_ == nullptr ? 0 : millis() - effectStartedMs_;
+  return diagnostics_;
+}
+
+const char* LedEngine::effectName(LedEffect effect) {
+  switch (effect) {
+    case LedEffect::None:
+      return "NONE";
+    case LedEffect::Solid:
+      return "SOLID";
+    case LedEffect::Breathing:
+      return "BREATHING";
+    case LedEffect::Rainbow:
+      return "RAINBOW";
+  }
+  return "NONE";
 }
 
 Effect* LedEngine::selectEffect(LedEffect effect) {
@@ -83,4 +174,15 @@ Effect* LedEngine::selectEffect(LedEffect effect) {
   }
 
   return nullptr;
+}
+
+void LedEngine::copyText(char* destination, size_t destinationSize, const char* source) {
+  if (destination == nullptr || destinationSize == 0) {
+    return;
+  }
+  if (source == nullptr) {
+    source = "";
+  }
+  strncpy(destination, source, destinationSize - 1);
+  destination[destinationSize - 1] = '\0';
 }

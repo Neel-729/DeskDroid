@@ -18,6 +18,7 @@ const char* tagName(LogTag tag){
     case LogTag::STATE: return "STATE";
     case LogTag::HEARTBEAT: return "HEARTBEAT";
     case LogTag::PROTO: return "PROTO";
+    case LogTag::SCHED: return "SCHED";
     case LogTag::SYSTEM: return "SYSTEM";
   }
   return "?";

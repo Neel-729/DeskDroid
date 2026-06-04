@@ -11,6 +11,7 @@ enum class LogTag : uint8_t {
   STATE,
   HEARTBEAT,
   PROTO,
+  SCHED,
   SYSTEM
 };
 

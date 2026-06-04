@@ -17,6 +17,9 @@ namespace {
 
 constexpr char PacketStart = '<';
 constexpr char PacketEnd = '>';
+constexpr uint8_t DefaultLedSpeed = 5;
+constexpr uint32_t LedAckTimeoutMs = 750;
+constexpr uint32_t LedRetryBackoffMs = 1200;
 
 Stream* linkStream = nullptr;
 HeartbeatSupervisor heartbeat;
@@ -37,6 +40,58 @@ const char* lastRecoveryReason = "";
 const char* lastSyncReason = "";
 uint8_t malformedBurstCount = 0;
 uint32_t malformedBurstStartMs = 0;
+char lastLedErrReason[32] = "";
+
+struct LedWireState {
+  bool power = false;
+  uint8_t brightness = 0;
+  uint8_t speed = DefaultLedSpeed;
+  AnimationMode mode = AnimationMode::None;
+  RGBColor color;
+};
+
+LedWireState lastSentLedState;
+LedWireState appliedLedState;
+LedWireState pendingLedState;
+bool hasLastSentLedState = false;
+bool hasAppliedLedState = false;
+bool hasPendingLedState = false;
+bool ledResyncRequired = true;
+LedApplyStatus ledStatus = LedApplyStatus::Applied;
+uint8_t ledRetryCount = 0;
+uint16_t pendingLedSequenceId = 0;
+uint32_t lastLedTxMs = 0;
+uint32_t lastLedAckMs = 0;
+
+bool sameColor(const RGBColor &left, const RGBColor &right){
+  return left.r == right.r && left.g == right.g && left.b == right.b;
+}
+
+bool sameLedState(const LedWireState &left, const LedWireState &right){
+  return left.power == right.power &&
+    left.brightness == right.brightness &&
+    left.speed == right.speed &&
+    left.mode == right.mode &&
+    sameColor(left.color, right.color);
+}
+
+LedWireState desiredLedState(){
+  const LightingState &lighting = SystemStateStore::current().lighting;
+  LedWireState state;
+  state.power = lighting.enabled && lighting.scheduleAllowsOutput;
+  state.brightness = lighting.brightness;
+  state.speed = DefaultLedSpeed;
+  state.mode = lighting.mode;
+  state.color = lighting.color;
+  return state;
+}
+
+void copyText(char* destination, size_t destinationSize, const char* source){
+  if(destination == nullptr || destinationSize == 0) return;
+  if(source == nullptr) source = "";
+  strncpy(destination, source, destinationSize - 1);
+  destination[destinationSize - 1] = '\0';
+}
 
 void transitionTo(Esp8266ConnectionState nextState){
   if(connectionState == nextState) return;
@@ -65,6 +120,7 @@ void framedRxPacket(char* destination, size_t destinationSize){
 }
 
 void refreshDiagnostics(){
+  const LedWireState desired = desiredLedState();
   linkDiagnostics.state = connectionState;
   linkDiagnostics.retryCount = synchronization.retries();
   linkDiagnostics.recoveryAttemptCount = recoveryAttemptCount;
@@ -72,6 +128,24 @@ void refreshDiagnostics(){
   linkDiagnostics.lastRecoveryMs = lastRecoveryMs;
   linkDiagnostics.lastRecoveryReason = lastRecoveryReason;
   linkDiagnostics.lastSyncReason = lastSyncReason;
+  linkDiagnostics.desiredLedMode = PacketBuilder::effectName(desired.mode);
+  linkDiagnostics.desiredLedPower = desired.power;
+  linkDiagnostics.desiredLedBrightness = desired.brightness;
+  linkDiagnostics.desiredLedSpeed = desired.speed;
+  linkDiagnostics.lastSentLedMode =
+    hasLastSentLedState ? PacketBuilder::effectName(lastSentLedState.mode) : "NONE";
+  linkDiagnostics.lastSentLedPower = hasLastSentLedState ? lastSentLedState.power : false;
+  linkDiagnostics.lastSentLedBrightness = hasLastSentLedState ? lastSentLedState.brightness : 0;
+  linkDiagnostics.lastSentLedSpeed = hasLastSentLedState ? lastSentLedState.speed : 0;
+  linkDiagnostics.pendingLedMode =
+    hasPendingLedState ? PacketBuilder::effectName(pendingLedState.mode) : "NONE";
+  linkDiagnostics.pendingLedPower = hasPendingLedState ? pendingLedState.power : false;
+  linkDiagnostics.pendingLedBrightness = hasPendingLedState ? pendingLedState.brightness : 0;
+  linkDiagnostics.pendingLedSpeed = hasPendingLedState ? pendingLedState.speed : 0;
+  linkDiagnostics.ledStatus = ledStatus;
+  linkDiagnostics.ledRetryCount = ledRetryCount;
+  linkDiagnostics.lastLedAckMs = lastLedAckMs;
+  linkDiagnostics.lastLedErrReason = lastLedErrReason;
 }
 
 void reinitializeTransport(unsigned long now){
@@ -153,6 +227,80 @@ bool sendFullSync(unsigned long now, const char* reason){
   return true;
 }
 
+bool sendLedState(const LedWireState &state, unsigned long now, bool retry){
+  char packet[Config::Esp8266MaxPacketSize + 1] = {};
+  pendingLedSequenceId = nextSequenceId();
+
+  LightingState lighting = SystemStateStore::current().lighting;
+  lighting.enabled = state.power;
+  lighting.scheduleAllowsOutput = true;
+  lighting.brightness = state.brightness;
+  lighting.mode = state.mode;
+  lighting.color = state.color;
+
+  if(PacketBuilder::setLedState(packet, sizeof(packet), lighting, state.speed, pendingLedSequenceId) == 0){
+    copyText(lastLedErrReason, sizeof(lastLedErrReason), "led_packet_build_failed");
+    ledStatus = LedApplyStatus::Failed;
+    return false;
+  }
+
+  if(!sendPacket(packet, now)){
+    copyText(lastLedErrReason, sizeof(lastLedErrReason), "led_send_failed");
+    ledStatus = LedApplyStatus::Failed;
+    return false;
+  }
+
+  pendingLedState = state;
+  lastSentLedState = state;
+  hasPendingLedState = true;
+  hasLastSentLedState = true;
+  ledStatus = LedApplyStatus::Pending;
+  lastLedTxMs = now;
+  if(retry && ledRetryCount < 255) ledRetryCount++;
+  if(!retry) ledRetryCount = 0;
+  LOG_INFO(
+    LogTag::LED,
+    "[LED_TX] mode=%s brightness=%u speed=%u power=%u retry=%u",
+    PacketBuilder::effectName(state.mode),
+    state.brightness,
+    state.speed,
+    state.power ? 1 : 0,
+    ledRetryCount
+  );
+  return true;
+}
+
+void markLedResyncRequired(){
+  ledResyncRequired = true;
+  hasPendingLedState = false;
+  pendingLedSequenceId = 0;
+}
+
+void serviceLedState(unsigned long now){
+  if(connectionState != Esp8266ConnectionState::Running) return;
+
+  const LedWireState desired = desiredLedState();
+  if(hasPendingLedState){
+    if(!sameLedState(desired, pendingLedState)){
+      sendLedState(desired, now, false);
+      return;
+    }
+    if(now - lastLedTxMs >= LedAckTimeoutMs + LedRetryBackoffMs){
+      LOG_WARN(LogTag::LED, "LED state ACK timeout, retry=%u", (unsigned)(ledRetryCount + 1));
+      sendLedState(pendingLedState, now, true);
+    }
+    return;
+  }
+
+  if(ledStatus == LedApplyStatus::Failed && now - lastLedTxMs < LedRetryBackoffMs){
+    return;
+  }
+
+  if(ledResyncRequired || !hasAppliedLedState || !sameLedState(desired, appliedLedState)){
+    sendLedState(desired, now, ledStatus == LedApplyStatus::Failed);
+  }
+}
+
 void requestSyncFromCurrentState(){
   synchronization.requestSync();
   observedStateRevision = SystemStateStore::revision();
@@ -162,7 +310,10 @@ void markStateDirtyIfChanged(){
   const uint32_t revision = SystemStateStore::revision();
   if(revision == observedStateRevision) return;
   observedStateRevision = revision;
-  synchronization.requestSync();
+  const uint16_t mask = SystemStateStore::lastChangeMask();
+  if((mask & static_cast<uint16_t>(StateChange::Protocol)) != 0){
+    synchronization.requestSync();
+  }
   CONTROL_LOG_INFO(LogTag::STATE, "dirty rev=%lu", (unsigned long)revision);
 }
 
@@ -175,6 +326,66 @@ void onAlivePacket(unsigned long now){
     synchronization.reset();
     sendFullSync(now, "alive_packet");
   }
+}
+
+const char* tokenValue(const Esp32ProtocolParser::Packet &packet, const char* key){
+  const size_t keyLength = strlen(key);
+  for(uint8_t i = 1; i < packet.tokenCount; ++i){
+    if(strncmp(packet.tokens[i], key, keyLength) == 0 && packet.tokens[i][keyLength] == '='){
+      return packet.tokens[i] + keyLength + 1;
+    }
+  }
+  return nullptr;
+}
+
+uint16_t parseSequenceValue(const char* value){
+  if(value == nullptr || value[0] == '\0') return 0;
+  uint32_t parsed = 0;
+  for(const char* cursor = value; *cursor != '\0'; ++cursor){
+    if(*cursor < '0' || *cursor > '9') return 0;
+    parsed = (parsed * 10UL) + (uint32_t)(*cursor - '0');
+    if(parsed > 65535UL) return 0;
+  }
+  return (uint16_t)parsed;
+}
+
+void handleLedAck(const Esp32ProtocolParser::Packet &packet, unsigned long now){
+  heartbeat.recordPong(now);
+  const uint16_t sequence = parseSequenceValue(tokenValue(packet, "SEQ"));
+  if(!hasPendingLedState || sequence != pendingLedSequenceId){
+    LOG_WARN(LogTag::LED, "[LED_ACK] stale seq=%u pending=%u", sequence, pendingLedSequenceId);
+    return;
+  }
+
+  appliedLedState = pendingLedState;
+  hasAppliedLedState = true;
+  hasPendingLedState = false;
+  pendingLedSequenceId = 0;
+  ledResyncRequired = false;
+  ledStatus = LedApplyStatus::Applied;
+  ledRetryCount = 0;
+  lastLedAckMs = now;
+  copyText(lastLedErrReason, sizeof(lastLedErrReason), "");
+  LOG_INFO(LogTag::LED, "[LED_ACK] mode=%s", PacketBuilder::effectName(appliedLedState.mode));
+}
+
+void handleLedError(const Esp32ProtocolParser::Packet &packet, unsigned long now){
+  heartbeat.recordPong(now);
+  const uint16_t sequence = parseSequenceValue(tokenValue(packet, "SEQ"));
+  const char* reason = tokenValue(packet, "REASON");
+  copyText(lastLedErrReason, sizeof(lastLedErrReason), reason != nullptr ? reason : "UNKNOWN");
+  if(hasPendingLedState && sequence == pendingLedSequenceId){
+    hasPendingLedState = false;
+    pendingLedSequenceId = 0;
+  }
+  ledStatus = LedApplyStatus::Failed;
+  lastLedTxMs = now;
+  LOG_WARN(
+    LogTag::LED,
+    "[LED_ERR] mode=%s reason=%s",
+    tokenValue(packet, "MODE") != nullptr ? tokenValue(packet, "MODE") : "UNKNOWN",
+    lastLedErrReason
+  );
 }
 
 void handleAck(const Esp32ProtocolParser::Packet &packet, unsigned long now){
@@ -209,6 +420,7 @@ void handleParsedPacket(Esp32ProtocolParser::Packet &packet, unsigned long now){
     recoveryAttemptCount = 0;
     resetMalformedBurst();
     transitionTo(Esp8266ConnectionState::Running);
+    markLedResyncRequired();
     CONTROL_LOG_INFO(LogTag::SYNC, "sync ok");
     return;
   }
@@ -220,6 +432,16 @@ void handleParsedPacket(Esp32ProtocolParser::Packet &packet, unsigned long now){
 
   if(Esp32ProtocolParser::equals(command, "ACK")){
     handleAck(packet, now);
+    return;
+  }
+
+  if(Esp32ProtocolParser::equals(command, "ACK_LED_STATE")){
+    handleLedAck(packet, now);
+    return;
+  }
+
+  if(Esp32ProtocolParser::equals(command, "ERR_LED_STATE")){
+    handleLedError(packet, now);
     return;
   }
 
@@ -370,6 +592,7 @@ void supervise(unsigned long now){
       break;
   }
 
+  serviceLedState(now);
   refreshDiagnostics();
 }
 
@@ -395,6 +618,13 @@ void begin() {
   lastRecoveryMs = 0;
   lastRecoveryReason = "";
   lastSyncReason = "";
+  markLedResyncRequired();
+  hasLastSentLedState = false;
+  hasAppliedLedState = false;
+  ledStatus = LedApplyStatus::Applied;
+  ledRetryCount = 0;
+  lastLedAckMs = 0;
+  copyText(lastLedErrReason, sizeof(lastLedErrReason), "");
   resetAssembler();
   resetMalformedBurst();
   transitionTo(Esp8266ConnectionState::Connecting);
@@ -436,6 +666,15 @@ const char* stateName(Esp8266ConnectionState state){
     case Esp8266ConnectionState::Running: return "RUNNING";
     case Esp8266ConnectionState::Recovering: return "RECOVERING";
     case Esp8266ConnectionState::Error: return "ERROR";
+  }
+  return "UNKNOWN";
+}
+
+const char* ledStatusName(LedApplyStatus status){
+  switch(status){
+    case LedApplyStatus::Pending: return "PENDING";
+    case LedApplyStatus::Applied: return "APPLIED";
+    case LedApplyStatus::Failed: return "FAILED";
   }
   return "UNKNOWN";
 }

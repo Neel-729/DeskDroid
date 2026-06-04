@@ -7,12 +7,7 @@ constexpr uint16_t FieldR1 = 1 << 0;
 constexpr uint16_t FieldR2 = 1 << 1;
 constexpr uint16_t FieldR3 = 1 << 2;
 constexpr uint16_t FieldR4 = 1 << 3;
-constexpr uint16_t FieldBrightness = 1 << 4;
-constexpr uint16_t FieldEffect = 1 << 5;
-constexpr uint16_t FieldColor = 1 << 6;
-constexpr uint16_t FieldLedEnabled = 1 << 7;
-constexpr uint16_t RequiredFields = FieldR1 | FieldR2 | FieldR3 | FieldR4 | FieldBrightness |
-                                    FieldEffect | FieldColor | FieldLedEnabled;
+constexpr uint16_t RequiredFields = FieldR1 | FieldR2 | FieldR3 | FieldR4;
 }  // namespace
 
 SyncParseResult StateSync::parseFullSync(const Packet& packet, StateSnapshot& snapshot) const {
@@ -54,18 +49,6 @@ SyncParseResult StateSync::parseFullSync(const Packet& packet, StateSnapshot& sn
       if (!parseBool(value, boolValue)) return SyncParseResult::Invalid;
       snapshot.relayStates[3] = boolValue;
       fieldsSeen |= FieldR4;
-    } else if (equals(key, "BR")) {
-      if (!parseByte(value, snapshot.brightness)) return SyncParseResult::Invalid;
-      fieldsSeen |= FieldBrightness;
-    } else if (equals(key, "FX")) {
-      if (!parseEffect(value, snapshot.activeEffect)) return SyncParseResult::Invalid;
-      fieldsSeen |= FieldEffect;
-    } else if (equals(key, "CR")) {
-      if (!parseColor(value, snapshot.color)) return SyncParseResult::Invalid;
-      fieldsSeen |= FieldColor;
-    } else if (equals(key, "LED")) {
-      if (!parseBool(value, snapshot.ledsEnabled)) return SyncParseResult::Invalid;
-      fieldsSeen |= FieldLedEnabled;
     } else {
       return SyncParseResult::Invalid;
     }

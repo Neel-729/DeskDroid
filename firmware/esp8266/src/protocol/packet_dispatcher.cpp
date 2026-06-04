@@ -59,6 +59,16 @@ void PacketDispatcher::dispatch(const Packet& packet) {
     return;
   }
 
+  if (equals(command, "SET_LED_STATE")) {
+    handleSetLedState(packet);
+    return;
+  }
+
+  if (equals(command, "GET_LED_DIAG")) {
+    handleLedDiagnostics(packet);
+    return;
+  }
+
   sendError(ProtocolError::UnknownCommand);
 }
 
@@ -74,7 +84,6 @@ void PacketDispatcher::handleFullSync(const Packet& packet) {
   state_.applySnapshot(snapshot);
   relayManager_.applyStateCache();
   relayManager_.update();
-  ledEngine_.applyState();
   runtime_.completeSync();
   sendSyncOkWithSequence(sequenceToken(packet));
   Logger::info(stream_, F("[SYNC]"), F("full sync applied"));
@@ -196,6 +205,101 @@ void PacketDispatcher::handleSetEffect(const Packet& packet) {
   sendAckWithSequence(packet.command(), sequenceToken(packet));
 }
 
+void PacketDispatcher::handleSetLedState(const Packet& packet) {
+  if (packet.tokenCount < 6) {
+    sendLedError("UNKNOWN", sequenceToken(packet), "INVALID_PACKET");
+    return;
+  }
+
+  const char* sequence = nullptr;
+  const char* modeName = "UNKNOWN";
+  LedEffect effect = LedEffect::None;
+  uint8_t brightness = 0;
+  uint8_t speed = 0;
+  bool power = false;
+  RgbColor color;
+  bool hasMode = false;
+  bool hasBrightness = false;
+  bool hasSpeed = false;
+  bool hasPower = false;
+  bool hasColor = false;
+
+  for (uint8_t i = 1; i < packet.tokenCount; ++i) {
+    const char* key = nullptr;
+    const char* value = nullptr;
+    if (!splitKeyValue(packet.tokens[i], key, value)) {
+      sendLedError(modeName, sequence, "INVALID_TOKEN");
+      ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "INVALID_TOKEN");
+      return;
+    }
+
+    if (equals(key, "SEQ")) {
+      sequence = value;
+    } else if (equals(key, "MODE")) {
+      modeName = value;
+      if (!parseEffect(value, effect)) {
+        sendLedError(modeName, sequence, "INVALID_MODE");
+        ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "INVALID_MODE");
+        return;
+      }
+      hasMode = true;
+    } else if (equals(key, "BR")) {
+      if (!parseByte(value, brightness)) {
+        sendLedError(modeName, sequence, "INVALID_BRIGHTNESS");
+        ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "INVALID_BRIGHTNESS");
+        return;
+      }
+      hasBrightness = true;
+    } else if (equals(key, "SPD")) {
+      if (!parseByte(value, speed)) {
+        sendLedError(modeName, sequence, "INVALID_SPEED");
+        ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "INVALID_SPEED");
+        return;
+      }
+      hasSpeed = true;
+    } else if (equals(key, "PWR")) {
+      if (!parseBool(value, power)) {
+        sendLedError(modeName, sequence, "INVALID_POWER");
+        ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "INVALID_POWER");
+        return;
+      }
+      hasPower = true;
+    } else if (equals(key, "CR")) {
+      if (!parseColor(value, color)) {
+        sendLedError(modeName, sequence, "INVALID_COLOR");
+        ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "INVALID_COLOR");
+        return;
+      }
+      hasColor = true;
+    } else {
+      sendLedError(modeName, sequence, "UNKNOWN_FIELD");
+      ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "UNKNOWN_FIELD");
+      return;
+    }
+  }
+
+  if (!hasMode || !hasBrightness || !hasSpeed || !hasPower || !hasColor) {
+    sendLedError(modeName, sequence, "MISSING_FIELD");
+    ledEngine_.recordCommandResult("SET_LED_STATE", "ERR", "MISSING_FIELD");
+    return;
+  }
+
+  ledEngine_.applyLedState(effect, brightness, speed, power, color);
+  ledEngine_.recordCommandResult("SET_LED_STATE", "ACK", "");
+  runtime_.recordHeartbeat();
+  sendLedAck(LedEngine::effectName(effect), sequence);
+  Logger::info(stream_, F("[LED_ACK]"), F("state applied"));
+}
+
+void PacketDispatcher::handleLedDiagnostics(const Packet& packet) {
+  if (packet.tokenCount != 1) {
+    sendError(ProtocolError::InvalidPacket);
+    return;
+  }
+
+  sendLedDiagnostics();
+}
+
 bool PacketDispatcher::parseRelayNumber(const char* value, uint8_t& relayNumber) const {
   uint8_t parsed = 0;
   if (!parseByte(value, parsed)) {
@@ -229,6 +333,45 @@ bool PacketDispatcher::parseByte(const char* value, uint8_t& result) const {
   return true;
 }
 
+bool PacketDispatcher::parseBool(const char* value, bool& result) const {
+  if (equals(value, "1") || equals(value, "ON")) {
+    result = true;
+    return true;
+  }
+  if (equals(value, "0") || equals(value, "OFF")) {
+    result = false;
+    return true;
+  }
+  return false;
+}
+
+bool PacketDispatcher::parseColor(const char* value, RgbColor& color) const {
+  if (value == nullptr) {
+    return false;
+  }
+
+  char buffer[12] = {};
+  const size_t length = strlen(value);
+  if (length >= sizeof(buffer)) {
+    return false;
+  }
+  strcpy(buffer, value);
+
+  char* firstComma = strchr(buffer, ',');
+  if (firstComma == nullptr) return false;
+  *firstComma = '\0';
+
+  char* secondComma = strchr(firstComma + 1, ',');
+  if (secondComma == nullptr) return false;
+  *secondComma = '\0';
+
+  if (strchr(secondComma + 1, ',') != nullptr) return false;
+
+  return parseByte(buffer, color.r) &&
+         parseByte(firstComma + 1, color.g) &&
+         parseByte(secondComma + 1, color.b);
+}
+
 bool PacketDispatcher::parseEffect(const char* value, LedEffect& effect) const {
   if (equals(value, "NONE") || equals(value, "OFF")) {
     effect = LedEffect::None;
@@ -247,6 +390,22 @@ bool PacketDispatcher::parseEffect(const char* value, LedEffect& effect) const {
     return true;
   }
   return false;
+}
+
+bool PacketDispatcher::splitKeyValue(char* token, const char*& key, const char*& value) const {
+  if (token == nullptr) {
+    return false;
+  }
+
+  char* separator = strchr(token, '=');
+  if (separator == nullptr || separator == token || separator[1] == '\0') {
+    return false;
+  }
+
+  *separator = '\0';
+  key = token;
+  value = separator + 1;
+  return true;
 }
 
 const char* PacketDispatcher::sequenceToken(const Packet& packet) const {
@@ -268,6 +427,51 @@ void PacketDispatcher::sendAckWithSequence(const char* command, const char* sequ
   stream_.print(command);
   stream_.print(F("|SEQ="));
   stream_.print(sequence);
+  stream_.println(F(">"));
+}
+
+void PacketDispatcher::sendLedAck(const char* mode, const char* sequence) {
+  stream_.print(F("<ACK_LED_STATE"));
+  if (sequence != nullptr) {
+    stream_.print(F("|SEQ="));
+    stream_.print(sequence);
+  }
+  stream_.print(F("|MODE="));
+  stream_.print(mode != nullptr ? mode : "UNKNOWN");
+  stream_.println(F(">"));
+}
+
+void PacketDispatcher::sendLedError(const char* mode, const char* sequence, const char* reason) {
+  stream_.print(F("<ERR_LED_STATE"));
+  if (sequence != nullptr) {
+    stream_.print(F("|SEQ="));
+    stream_.print(sequence);
+  }
+  stream_.print(F("|MODE="));
+  stream_.print(mode != nullptr ? mode : "UNKNOWN");
+  stream_.print(F("|REASON="));
+  stream_.print(reason != nullptr ? reason : "UNKNOWN");
+  stream_.println(F(">"));
+}
+
+void PacketDispatcher::sendLedDiagnostics() {
+  const LedEngineDiagnostics& diagnostics = ledEngine_.diagnostics();
+  stream_.print(F("<LED_DIAG|ACTIVE="));
+  stream_.print(LedEngine::effectName(diagnostics.activeEffect));
+  stream_.print(F("|PWR="));
+  stream_.print(diagnostics.enabled ? 1 : 0);
+  stream_.print(F("|BR="));
+  stream_.print(diagnostics.brightness);
+  stream_.print(F("|SPD="));
+  stream_.print(diagnostics.speed);
+  stream_.print(F("|RUNTIME="));
+  stream_.print(diagnostics.animationRuntimeMs);
+  stream_.print(F("|LAST="));
+  stream_.print(diagnostics.lastCommand);
+  stream_.print(F("|RESULT="));
+  stream_.print(diagnostics.lastResult);
+  stream_.print(F("|REASON="));
+  stream_.print(diagnostics.lastReason);
   stream_.println(F(">"));
 }
 
