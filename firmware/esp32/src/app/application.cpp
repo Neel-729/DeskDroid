@@ -5,6 +5,7 @@
 
 #include "application_commands.h"
 #include "hardware_requests.h"
+#include "idle_manager.h"
 #include "input_service.h"
 #include "navigation.h"
 #include "navigation_stack.h"
@@ -127,6 +128,10 @@ void initHardware(){
   // Initialize navigation stack
   NavigationStack::begin();
   
+  // Initialize idle manager with timeout from settings
+  IdleManager::begin();
+  IdleManager::setIdleTimeout((IdleManager::IdleTimeout)SettingsFlow::settings().idleTimeoutSeconds);
+  
   // Initialize persistent storage and restore relay states
   PersistentStorage::begin();
   bool savedRelayStates[SystemState::RelayCount] = {};
@@ -215,6 +220,12 @@ void checkTimerDone(unsigned long now){
 void handleEvent(const AppEvent &event, unsigned long now){
   EventType ev = event.type;
   DeviceSettings &settings = SettingsFlow::settings();
+
+  // Track user activity for idle manager
+  if(ev == EVENT_CLICK || ev == EVENT_DOUBLE_CLICK || ev == EVENT_LONG_PRESS ||
+     ev == EVENT_ROTATE_CW || ev == EVENT_ROTATE_CCW){
+    IdleManager::notifyActivity(now);
+  }
 
   switch(ev){
     case EVENT_TIMER_DONE:
@@ -587,6 +598,16 @@ void runInputTask(FrameContext &context){
 void runEventTask(FrameContext &context){
   if(processEvents(context.nowMs)){
     runLightingTask(context);
+  }
+  
+  // Check for idle timeout and auto-return to dashboard
+  if(IdleManager::update(context.nowMs)){
+    // Idle timeout reached - return to home
+    if(!AppNavigation::isAtHome()){
+      LOG_INFO(LogTag::APP, "[IDLE] Auto-return to dashboard triggered");
+      AppNavigation::goHome();
+      AudioService::beep(150);  // Short beep for auto-return
+    }
   }
 }
 

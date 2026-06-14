@@ -1,6 +1,7 @@
 #include "settings_flow.h"
 
 #include "application_commands.h"
+#include "idle_manager.h"
 #include "navigation.h"
 #include "../core/system_state.h"
 #include "../core/time_service.h"
@@ -20,6 +21,7 @@ const char* settingsMenu[]={
   "Auto Lights",
   "Lights On",
   "Lights Off",
+  "Auto Return Home",
   "Buzzer",
   "Quotes",
   "Time Format",
@@ -47,6 +49,11 @@ uint8_t adjustMonth=1;
 uint8_t adjustDay=1;
 SettingsFlow::DateField adjustDateField = SettingsFlow::DATE_DAY;
 
+// Idle timeout options in order
+const uint16_t IDLE_TIMEOUT_OPTIONS[] = {0, 15, 30, 60, 120, 300};
+const uint8_t IDLE_TIMEOUT_COUNT = 6;
+uint8_t adjustIdleTimeoutIndex = 0;  // Current selection index (0-5)
+
 void sanitizeLoadedSettings(){
   if(deviceSettings.lightsOnHour > 23) deviceSettings.lightsOnHour = 7;
   if(deviceSettings.lightsOnMinute > 59) deviceSettings.lightsOnMinute = 0;
@@ -60,6 +67,7 @@ void resetEditModes(){
   adjustHourField=true;
   adjustDateField=SettingsFlow::DATE_DAY;
   scheduleEditField=SCHEDULE_HOUR;
+  adjustIdleTimeoutIndex=0;
 }
 
 }
@@ -90,12 +98,21 @@ void rotateMenu(int step){
 void beginEdit(){
   resetEditModes();
 
-  if(settingsIndex==10){
+  if(settingsIndex==7){
+    // Auto Return Home - find current timeout in options array
+    for(uint8_t i = 0; i < IDLE_TIMEOUT_COUNT; i++){
+      if(IDLE_TIMEOUT_OPTIONS[i] == deviceSettings.idleTimeoutSeconds){
+        adjustIdleTimeoutIndex = i;
+        break;
+      }
+    }
+  }
+  else if(settingsIndex==11){
     DateTime n=TimeService::now();
     adjustHour=n.hour();
     adjustMinute=n.minute();
   }
-  else if(settingsIndex==11){
+  else if(settingsIndex==12){
     DateTime n=TimeService::now();
     adjustYear=n.year();
     adjustMonth=n.month();
@@ -197,15 +214,22 @@ void adjustValue(int step){
     AppCommands::applySettings(deviceSettings);
     LightingService::refreshSchedule(deviceSettings);
   }
-  else if(settingsIndex==7) {
+  else if(settingsIndex==7){
+    // Auto Return Home - cycle through timeout options
+    int newIndex = (int)adjustIdleTimeoutIndex + step;
+    if(newIndex < 0) newIndex = IDLE_TIMEOUT_COUNT - 1;
+    if(newIndex >= IDLE_TIMEOUT_COUNT) newIndex = 0;
+    adjustIdleTimeoutIndex = (uint8_t)newIndex;
+  }
+  else if(settingsIndex==8) {
     deviceSettings.buzzer=!deviceSettings.buzzer;
     AppCommands::applySettings(deviceSettings);
   }
-  else if(settingsIndex==8) {
+  else if(settingsIndex==9) {
     deviceSettings.quotes=!deviceSettings.quotes;
     AppCommands::applySettings(deviceSettings);
   }
-  else if(settingsIndex==9) {
+  else if(settingsIndex==10) {
     deviceSettings.format24=!deviceSettings.format24;
     AppCommands::applySettings(deviceSettings);
   }
@@ -221,10 +245,16 @@ void advanceField(){
     const bool enabled = SystemStateStore::current().relayStates[relayIndex];
     AppCommands::setRelay(relayIndex + 1, !enabled);
   }
-  else if(settingsIndex==10){
-    adjustHourField=!adjustHourField;
+  else if(settingsIndex==7){
+    // Auto Return Home - confirm selection
+    deviceSettings.idleTimeoutSeconds = IDLE_TIMEOUT_OPTIONS[adjustIdleTimeoutIndex];
+    AppCommands::applySettings(deviceSettings);
+    IdleManager::setIdleTimeout((IdleManager::IdleTimeout)deviceSettings.idleTimeoutSeconds);
   }
   else if(settingsIndex==11){
+    adjustHourField=!adjustHourField;
+  }
+  else if(settingsIndex==12){
     if(adjustDateField==DATE_DAY) adjustDateField=DATE_MONTH;
     else if(adjustDateField==DATE_MONTH) adjustDateField=DATE_YEAR;
     else adjustDateField=DATE_DAY;
@@ -236,12 +266,12 @@ void advanceField(){
 }
 
 void commitEdit(unsigned long now){
-  if(settingsIndex==10){
+  if(settingsIndex==11){
     DateTime current = TimeService::now();
     TimeService::adjust(DateTime(current.year(),current.month(),current.day(),adjustHour,adjustMinute,0));
     ClockFeature::syncToRtc(now);
   }
-  else if(settingsIndex==11){
+  else if(settingsIndex==12){
     DateTime current = TimeService::now();
     TimeService::adjust(DateTime(adjustYear,adjustMonth,adjustDay,current.hour(),current.minute(),0));
     ClockFeature::syncToRtc(now);
@@ -264,7 +294,7 @@ void exitToClock(){
 }
 
 bool shouldBlink(){
-  return settingsIndex==5 || settingsIndex==6 || settingsIndex==10 || settingsIndex==11;
+  return settingsIndex==5 || settingsIndex==6 || settingsIndex==7 || settingsIndex==11 || settingsIndex==12;
 }
 
 Snapshot snapshot(const char* firmwareVersion, bool blinkState){
@@ -282,7 +312,9 @@ Snapshot snapshot(const char* firmwareVersion, bool blinkState){
     adjustDay,
     (uint8_t)adjustDateField,
     relayIndex,
-    SystemStateStore::current().relayStates[relayIndex]
+    SystemStateStore::current().relayStates[relayIndex],
+    deviceSettings.idleTimeoutSeconds,
+    adjustIdleTimeoutIndex
   };
   return current;
 }
