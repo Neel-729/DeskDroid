@@ -47,6 +47,7 @@ void runEventTask(FrameContext &context);
 void runUiTask(FrameContext &context);
 void runDiagnosticsTask(FrameContext &context);
 void flushUiFrame();
+bool flushUiFrame(bool force);
 UiScreens::TimerScreenData timerScreenData(unsigned long now);
 UiScreens::StopwatchScreenData stopwatchScreenData();
 UiScreens::RemindersScreenData remindersScreenData();
@@ -69,6 +70,32 @@ ScheduledTask scheduledTasks[] = {
 };
 
 Scheduler scheduler(scheduledTasks, sizeof(scheduledTasks) / sizeof(scheduledTasks[0]));
+
+struct UiTaskTimingStats {
+  uint32_t decisionUs = 0;
+  uint32_t dataUs = 0;
+  uint32_t menuDrawingUs = 0;
+  uint32_t textRenderingUs = 0;
+  uint32_t iconRenderingUs = 0;
+  uint32_t animationRenderingUs = 0;
+  uint32_t displayRenderingUs = 0;
+  uint32_t spiTransferUs = 0;
+  uint32_t frameUs = 0;
+  uint32_t maxFrameUs = 0;
+  uint32_t framesBuilt = 0;
+  uint32_t framesFlushed = 0;
+  uint32_t framesSkipped = 0;
+  uint32_t unchangedFrames = 0;
+  uint32_t fullScreenRedraws = 0;
+  uint32_t unnecessaryRedraws = 0;
+};
+
+UiTaskTimingStats uiTiming;
+char lastFlushedRows[2][17] = {
+  "                ",
+  "                "
+};
+bool lastUiFrameValid = false;
 
 bool bootAnimation(unsigned long now){
   static uint8_t stage=0;
@@ -141,12 +168,48 @@ bool shouldBlinkCurrentScreen(){
   return false;
 }
 
-void updateBlinkState(unsigned long now){
-  if(!shouldBlinkCurrentScreen()) return;
+bool blinkDue(unsigned long now){
+  return shouldBlinkCurrentScreen() && now - systemContext.ui.lastBlinkMs > 500;
+}
+
+bool screenNeedsPeriodicRefresh(AppState state){
+  switch(state){
+    case STATE_CLOCK:
+      return true;
+
+    case STATE_TIMER_VIEW:
+      return TimerFeature::isRunning();
+
+    case STATE_TIMER_EDIT:
+    case STATE_REMINDER_EDIT:
+      return shouldBlinkCurrentScreen();
+
+    case STATE_STOPWATCH:
+      return StopwatchFeature::isRunning();
+
+    case STATE_SETTINGS_EDIT:
+      return SettingsFlow::shouldBlink();
+
+    default:
+      return false;
+  }
+}
+
+bool shouldBuildUiFrame(unsigned long now, bool stateChanged){
+  if(stateChanged) return true;
+  if(blinkDue(now)) return true;
+  if(!screenNeedsPeriodicRefresh(AppNavigation::current())) return false;
+  return now - systemContext.ui.lastRefreshMs > 250;
+}
+
+bool updateBlinkState(unsigned long now){
+  if(!shouldBlinkCurrentScreen()) return false;
   if(now-systemContext.ui.lastBlinkMs>500){
     systemContext.ui.blinkState=!systemContext.ui.blinkState;
     systemContext.ui.lastBlinkMs=now;
+    return true;
   }
+  return false;
 }
 
 void startReminderAlarm(uint8_t idx, unsigned long now){
@@ -413,8 +476,36 @@ bool processEvents(unsigned long now){
   return processed;
 }
 
+bool sameUiRows(const char* row0, const char* row1){
+  return lastUiFrameValid &&
+    strncmp(lastFlushedRows[0], row0, 16) == 0 &&
+    strncmp(lastFlushedRows[1], row1, 16) == 0;
+}
+
+void rememberUiRows(const char* row0, const char* row1){
+  strncpy(lastFlushedRows[0], row0, 16);
+  strncpy(lastFlushedRows[1], row1, 16);
+  lastFlushedRows[0][16] = '\0';
+  lastFlushedRows[1][16] = '\0';
+  lastUiFrameValid = true;
+}
+
 void flushUiFrame(){
-  HardwareRequests::writeDisplayRows(UiScreens::row(0), UiScreens::row(1));
+  (void)flushUiFrame(false);
+}
+
+bool flushUiFrame(bool force){
+  const char* row0 = UiScreens::row(0);
+  const char* row1 = UiScreens::row(1);
+  if(!force && sameUiRows(row0, row1)){
+    uiTiming.unchangedFrames++;
+    return false;
+  }
+
+  HardwareRequests::writeDisplayRows(row0, row1);
+  rememberUiRows(row0, row1);
+  uiTiming.framesFlushed++;
+  return true;
 }
 
 UiScreens::TimerScreenData timerScreenData(unsigned long now){
@@ -519,56 +610,140 @@ void runEventTask(FrameContext &context){
 }
 
 void runUiTask(FrameContext &context){
+  const uint32_t frameStartUs = micros();
   const unsigned long now = context.nowMs;
   DeviceSettings &settings = SettingsFlow::settings();
 
-  if(now-systemContext.ui.lastRefreshMs>250 || AppNavigation::hasStateChanged()){
-    if(AppNavigation::hasStateChanged()){
-      HardwareRequests::clearDisplay();
-      AppNavigation::clearStateChanged();
+  uiTiming.decisionUs = 0;
+  uiTiming.dataUs = 0;
+  uiTiming.menuDrawingUs = 0;
+  uiTiming.textRenderingUs = 0;
+  uiTiming.iconRenderingUs = 0;
+  uiTiming.animationRenderingUs = 0;
+  uiTiming.displayRenderingUs = 0;
+  uiTiming.spiTransferUs = 0;
+  uiTiming.frameUs = 0;
+
+  const uint32_t decisionStartUs = micros();
+  const bool stateChanged = AppNavigation::hasStateChanged();
+  const bool buildFrame = shouldBuildUiFrame(now, stateChanged);
+  uiTiming.decisionUs = micros() - decisionStartUs;
+
+  if(!buildFrame){
+    uiTiming.framesSkipped++;
+    uiTiming.frameUs = micros() - frameStartUs;
+    return;
+  }
+
+  if(stateChanged){
+    AppNavigation::clearStateChanged();
+  }
+
+  const uint32_t blinkStartUs = micros();
+  (void)updateBlinkState(now);
+  uiTiming.animationRenderingUs += micros() - blinkStartUs;
+
+  const AppState currentState = AppNavigation::current();
+  uiTiming.framesBuilt++;
+
+  switch(currentState){
+    case STATE_CLOCK: {
+      const uint32_t animationStartUs = micros();
+      ClockFeature::update(now,settings.quotes,settings.format24);
+      uiTiming.animationRenderingUs += micros() - animationStartUs;
+
+      const uint32_t renderStartUs = micros();
+      UiScreens::renderClockScreen(ClockFeature::timeRow(),ClockFeature::quoteRow());
+      uiTiming.textRenderingUs += micros() - renderStartUs;
+      break;
     }
-    updateBlinkState(now);
 
-    switch(AppNavigation::current()){
-      case STATE_CLOCK:
-        ClockFeature::update(now,settings.quotes,settings.format24);
-        UiScreens::renderClockScreen(ClockFeature::timeRow(),ClockFeature::quoteRow());
-        break;
+    case STATE_TIMER_VIEW:
+    case STATE_TIMER_EDIT:
+    case STATE_TIMER_ALARM: {
+      const uint32_t dataStartUs = micros();
+      UiScreens::TimerScreenData data = timerScreenData(now);
+      uiTiming.dataUs += micros() - dataStartUs;
 
-      case STATE_TIMER_VIEW:
-      case STATE_TIMER_EDIT:
-      case STATE_TIMER_ALARM:
-        UiScreens::renderTimerScreen(AppNavigation::current(),timerScreenData(now),systemContext.ui.blinkState);
-        break;
-
-      case STATE_STOPWATCH:
-        StopwatchFeature::update(now);
-        UiScreens::renderStopwatchScreen(stopwatchScreenData());
-        break;
-
-      case STATE_REMINDER_HOME:
-      case STATE_REMINDER_LIST:
-      case STATE_REMINDER_EDIT:
-        UiScreens::renderRemindersScreen(AppNavigation::current(),remindersScreenData(),settings.format24,systemContext.ui.blinkState);
-        break;
-
-      case STATE_SETTINGS_HOME:
-      case STATE_SETTINGS_MENU:
-      case STATE_SETTINGS_EDIT:
-        UiScreens::renderSettingsScreen(AppNavigation::current(),settings,SettingsFlow::snapshot(FIRMWARE_VERSION,systemContext.ui.blinkState));
-        break;
-
-      case STATE_REMINDER_ALARM:
-        UiScreens::renderReminderAlarmScreen(remindersScreenData());
-        break;
+      const uint32_t renderStartUs = micros();
+      UiScreens::renderTimerScreen(currentState,data,systemContext.ui.blinkState);
+      uiTiming.textRenderingUs += micros() - renderStartUs;
+      break;
     }
 
-    flushUiFrame();
-    systemContext.ui.lastRefreshMs=now;
+    case STATE_STOPWATCH: {
+      const uint32_t animationStartUs = micros();
+      StopwatchFeature::update(now);
+      uiTiming.animationRenderingUs += micros() - animationStartUs;
+
+      const uint32_t dataStartUs = micros();
+      UiScreens::StopwatchScreenData data = stopwatchScreenData();
+      uiTiming.dataUs += micros() - dataStartUs;
+
+      const uint32_t renderStartUs = micros();
+      UiScreens::renderStopwatchScreen(data);
+      uiTiming.textRenderingUs += micros() - renderStartUs;
+      break;
+    }
+
+    case STATE_REMINDER_HOME:
+    case STATE_REMINDER_LIST:
+    case STATE_REMINDER_EDIT: {
+      const uint32_t dataStartUs = micros();
+      UiScreens::RemindersScreenData data = remindersScreenData();
+      uiTiming.dataUs += micros() - dataStartUs;
+
+      const uint32_t renderStartUs = micros();
+      UiScreens::renderRemindersScreen(currentState,data,settings.format24,systemContext.ui.blinkState);
+      uiTiming.menuDrawingUs += micros() - renderStartUs;
+      break;
+    }
+
+    case STATE_SETTINGS_HOME:
+    case STATE_SETTINGS_MENU:
+    case STATE_SETTINGS_EDIT: {
+      const uint32_t dataStartUs = micros();
+      SettingsFlow::Snapshot snapshot = SettingsFlow::snapshot(FIRMWARE_VERSION,systemContext.ui.blinkState);
+      uiTiming.dataUs += micros() - dataStartUs;
+
+      const uint32_t renderStartUs = micros();
+      UiScreens::renderSettingsScreen(currentState,settings,snapshot);
+      uiTiming.menuDrawingUs += micros() - renderStartUs;
+      break;
+    }
+
+    case STATE_REMINDER_ALARM: {
+      const uint32_t dataStartUs = micros();
+      UiScreens::RemindersScreenData data = remindersScreenData();
+      uiTiming.dataUs += micros() - dataStartUs;
+
+      const uint32_t renderStartUs = micros();
+      UiScreens::renderReminderAlarmScreen(data);
+      uiTiming.textRenderingUs += micros() - renderStartUs;
+      break;
+    }
+  }
+
+  const uint32_t displayStartUs = micros();
+  const bool flushed = flushUiFrame(false);
+  uiTiming.displayRenderingUs = micros() - displayStartUs;
+  if(!flushed){
+    uiTiming.unnecessaryRedraws++;
+  }
+  systemContext.ui.lastRefreshMs=now;
+  uiTiming.frameUs = micros() - frameStartUs;
+  if(uiTiming.frameUs > uiTiming.maxFrameUs){
+    uiTiming.maxFrameUs = uiTiming.frameUs;
   }
 }
 
 void runDiagnosticsTask(FrameContext &context){
+  static uint32_t lastLedPerfMs = 0;
+  static uint32_t lastLedPerfTx = 0;
+  static uint32_t lastLedPerfAck = 0;
+  static uint32_t lastLedPerfRetry = 0;
+  static uint32_t lastLedPerfUartTxBytes = 0;
+
   const SchedulerStats &schedulerStats = scheduler.stats();
   const HardwareRequestStats &hardwareStats = HardwareRequests::stats();
   const EventQueueStats &eventStats = eventQueueStats();
@@ -576,6 +751,21 @@ void runDiagnosticsTask(FrameContext &context){
   const FaultRecord &lastFault = faults.lastFault;
   const Esp8266LinkDiagnostics &link = Esp8266Link::diagnostics();
   const UartMonitorStats &uart = UartTrafficMonitor::stats();
+  const uint32_t ledPerfElapsedMs = lastLedPerfMs == 0 ? 0 : context.nowMs - lastLedPerfMs;
+  const uint32_t ledTxDelta = link.ledTx - lastLedPerfTx;
+  const uint32_t ledAckDelta = link.ledAck - lastLedPerfAck;
+  const uint32_t ledRetryDelta = link.ledRetry - lastLedPerfRetry;
+  const uint32_t uartTxByteDelta = uart.txBytes - lastLedPerfUartTxBytes;
+  const uint32_t ledTxPerMinute =
+    ledPerfElapsedMs == 0 ? 0 : (uint32_t)(((uint64_t)ledTxDelta * 60000ULL) / ledPerfElapsedMs);
+  const uint32_t uartTxBytesPerMinute =
+    ledPerfElapsedMs == 0 ? 0 : (uint32_t)(((uint64_t)uartTxByteDelta * 60000ULL) / ledPerfElapsedMs);
+
+  lastLedPerfMs = context.nowMs;
+  lastLedPerfTx = link.ledTx;
+  lastLedPerfAck = link.ledAck;
+  lastLedPerfRetry = link.ledRetry;
+  lastLedPerfUartTxBytes = uart.txBytes;
 
   LOG_INFO(
     LogTag::APP,
@@ -633,11 +823,36 @@ void runDiagnosticsTask(FrameContext &context){
 
   LOG_INFO(
     LogTag::APP,
-    "LED_STATE desired=%s/%u/%u/%u sent=%s/%u/%u/%u pending=%s/%u/%u/%u status=%s retry=%u ackAge=%lums err=%s",
+    "UI_TIMING frame=%luus max=%luus decision=%luus data=%luus menu=%luus text=%luus icon=%luus animation=%luus display=%luus spi=%luus built=%lu flushed=%lu skipped=%lu unchanged=%lu full=%lu unnecessary=%lu",
+    (unsigned long)uiTiming.frameUs,
+    (unsigned long)uiTiming.maxFrameUs,
+    (unsigned long)uiTiming.decisionUs,
+    (unsigned long)uiTiming.dataUs,
+    (unsigned long)uiTiming.menuDrawingUs,
+    (unsigned long)uiTiming.textRenderingUs,
+    (unsigned long)uiTiming.iconRenderingUs,
+    (unsigned long)uiTiming.animationRenderingUs,
+    (unsigned long)uiTiming.displayRenderingUs,
+    (unsigned long)uiTiming.spiTransferUs,
+    (unsigned long)uiTiming.framesBuilt,
+    (unsigned long)uiTiming.framesFlushed,
+    (unsigned long)uiTiming.framesSkipped,
+    (unsigned long)uiTiming.unchangedFrames,
+    (unsigned long)uiTiming.fullScreenRedraws,
+    (unsigned long)uiTiming.unnecessaryRedraws
+  );
+
+  LOG_INFO(
+    LogTag::APP,
+    "LED_STATE desired=%s/%u/%u/%u active=%s/%u/%u/%u sent=%s/%u/%u/%u pending=%s/%u/%u/%u status=%s retry=%u ackAge=%lums err=%s counts tx=%lu ack=%lu retry=%lu dupIgnored=%lu",
     link.desiredLedMode,
     link.desiredLedPower ? 1 : 0,
     link.desiredLedBrightness,
     link.desiredLedSpeed,
+    link.activeLedMode,
+    link.activeLedPower ? 1 : 0,
+    link.activeLedBrightness,
+    link.activeLedSpeed,
     link.lastSentLedMode,
     link.lastSentLedPower ? 1 : 0,
     link.lastSentLedBrightness,
@@ -649,7 +864,23 @@ void runDiagnosticsTask(FrameContext &context){
     Esp8266Link::ledStatusName(link.ledStatus),
     link.ledRetryCount,
     link.lastLedAckMs == 0 ? 0UL : (unsigned long)(context.nowMs - link.lastLedAckMs),
-    link.lastLedErrReason
+    link.lastLedErrReason,
+    (unsigned long)link.ledTx,
+    (unsigned long)link.ledAck,
+    (unsigned long)link.ledRetry,
+    (unsigned long)link.ledDuplicateIgnored
+  );
+
+  LOG_INFO(
+    LogTag::APP,
+    "LED_PERF interval=%lums txDelta=%lu ackDelta=%lu retryDelta=%lu txRate=%lu/min uartTxBytesDelta=%lu uartTxBytesRate=%lu/min",
+    (unsigned long)ledPerfElapsedMs,
+    (unsigned long)ledTxDelta,
+    (unsigned long)ledAckDelta,
+    (unsigned long)ledRetryDelta,
+    (unsigned long)ledTxPerMinute,
+    (unsigned long)uartTxByteDelta,
+    (unsigned long)uartTxBytesPerMinute
   );
 
   logTaskRuntimeProfiles();
@@ -816,6 +1047,7 @@ void setup(){
   ClockFeature::begin(now);
   HardwareRequests::clearDisplay();
   UiScreens::clearFrame();
+  lastUiFrameValid = false;
   scheduler.reset(now);
   LOG_INFO(LogTag::APP, "DeskDroid %s ready with %u scheduled tasks", FIRMWARE_VERSION, scheduler.taskCount());
 }

@@ -14,9 +14,11 @@ enum class Esp8266ConnectionState : uint8_t {
 };
 
 enum class LedApplyStatus : uint8_t {
-  Pending,
-  Applied,
-  Failed,
+  Idle,
+  PendingTx,
+  WaitingAck,
+  Synced,
+  Error,
 };
 
 struct Esp8266LinkDiagnostics {
@@ -28,21 +30,29 @@ struct Esp8266LinkDiagnostics {
   const char* lastRecoveryReason = "";
   const char* lastSyncReason = "";
   const char* desiredLedMode = "NONE";
+  const char* activeLedMode = "NONE";
   const char* lastSentLedMode = "NONE";
   const char* pendingLedMode = "NONE";
   bool desiredLedPower = false;
+  bool activeLedPower = false;
   bool lastSentLedPower = false;
   bool pendingLedPower = false;
   uint8_t desiredLedBrightness = 0;
+  uint8_t activeLedBrightness = 0;
   uint8_t lastSentLedBrightness = 0;
   uint8_t pendingLedBrightness = 0;
   uint8_t desiredLedSpeed = 0;
+  uint8_t activeLedSpeed = 0;
   uint8_t lastSentLedSpeed = 0;
   uint8_t pendingLedSpeed = 0;
-  LedApplyStatus ledStatus = LedApplyStatus::Applied;
+  LedApplyStatus ledStatus = LedApplyStatus::Idle;
   uint8_t ledRetryCount = 0;
   uint32_t lastLedAckMs = 0;
   const char* lastLedErrReason = "";
+  uint32_t ledTx = 0;
+  uint32_t ledAck = 0;
+  uint32_t ledRetry = 0;
+  uint32_t ledDuplicateIgnored = 0;
 };
 
 namespace Esp8266Link {

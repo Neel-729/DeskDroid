@@ -42,7 +42,7 @@ class PacketDispatcher {
   bool splitKeyValue(char* token, const char*& key, const char*& value) const;
   const char* sequenceToken(const Packet& packet) const;
   void sendAckWithSequence(const char* command, const char* sequenceToken);
-  void sendLedAck(const char* mode, const char* sequenceToken);
+  void sendLedAck(const char* mode, const char* sequenceToken, bool duplicateIgnored);
   void sendLedError(const char* mode, const char* sequenceToken, const char* reason);
   void sendLedDiagnostics();
   void sendPongWithSequence(const char* sequenceToken);

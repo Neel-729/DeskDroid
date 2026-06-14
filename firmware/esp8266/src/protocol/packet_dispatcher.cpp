@@ -284,11 +284,11 @@ void PacketDispatcher::handleSetLedState(const Packet& packet) {
     return;
   }
 
-  ledEngine_.applyLedState(effect, brightness, speed, power, color);
-  ledEngine_.recordCommandResult("SET_LED_STATE", "ACK", "");
+  const bool applied = ledEngine_.applyLedState(effect, brightness, speed, power, color);
+  ledEngine_.recordCommandResult("SET_LED_STATE", applied ? "ACK" : "DUP", "");
   runtime_.recordHeartbeat();
-  sendLedAck(LedEngine::effectName(effect), sequence);
-  Logger::info(stream_, F("[LED_ACK]"), F("state applied"));
+  sendLedAck(LedEngine::effectName(effect), sequence, !applied);
+  Logger::info(stream_, F("[LED_SYNC]"), applied ? F("state applied") : F("duplicate ignored"));
 }
 
 void PacketDispatcher::handleLedDiagnostics(const Packet& packet) {
@@ -389,6 +389,10 @@ bool PacketDispatcher::parseEffect(const char* value, LedEffect& effect) const {
     effect = LedEffect::Rainbow;
     return true;
   }
+  if (equals(value, "AMBIENT")) {
+    effect = LedEffect::Ambient;
+    return true;
+  }
   return false;
 }
 
@@ -430,19 +434,22 @@ void PacketDispatcher::sendAckWithSequence(const char* command, const char* sequ
   stream_.println(F(">"));
 }
 
-void PacketDispatcher::sendLedAck(const char* mode, const char* sequence) {
-  stream_.print(F("<ACK_LED_STATE"));
+void PacketDispatcher::sendLedAck(const char* mode, const char* sequence, bool duplicateIgnored) {
+  stream_.print(F("<ACK_SUCCESS|CMD=SET_LED_STATE"));
   if (sequence != nullptr) {
     stream_.print(F("|SEQ="));
     stream_.print(sequence);
   }
   stream_.print(F("|MODE="));
   stream_.print(mode != nullptr ? mode : "UNKNOWN");
+  if (duplicateIgnored) {
+    stream_.print(F("|DUP=1"));
+  }
   stream_.println(F(">"));
 }
 
 void PacketDispatcher::sendLedError(const char* mode, const char* sequence, const char* reason) {
-  stream_.print(F("<ERR_LED_STATE"));
+  stream_.print(F("<ACK_FAILURE|CMD=SET_LED_STATE"));
   if (sequence != nullptr) {
     stream_.print(F("|SEQ="));
     stream_.print(sequence);
@@ -466,6 +473,8 @@ void PacketDispatcher::sendLedDiagnostics() {
   stream_.print(diagnostics.speed);
   stream_.print(F("|RUNTIME="));
   stream_.print(diagnostics.animationRuntimeMs);
+  stream_.print(F("|DUP="));
+  stream_.print(diagnostics.duplicateIgnored);
   stream_.print(F("|LAST="));
   stream_.print(diagnostics.lastCommand);
   stream_.print(F("|RESULT="));

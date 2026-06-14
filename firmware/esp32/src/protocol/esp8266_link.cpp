@@ -19,7 +19,9 @@ constexpr char PacketStart = '<';
 constexpr char PacketEnd = '>';
 constexpr uint8_t DefaultLedSpeed = 5;
 constexpr uint32_t LedAckTimeoutMs = 750;
-constexpr uint32_t LedRetryBackoffMs = 1200;
+constexpr uint32_t LedRetryBackoffBaseMs = 1200;
+constexpr uint32_t LedRetryBackoffMaxMs = 30000;
+constexpr uint8_t MaxLedRetries = 3;
 
 Stream* linkStream = nullptr;
 HeartbeatSupervisor heartbeat;
@@ -57,11 +59,16 @@ bool hasLastSentLedState = false;
 bool hasAppliedLedState = false;
 bool hasPendingLedState = false;
 bool ledResyncRequired = true;
-LedApplyStatus ledStatus = LedApplyStatus::Applied;
+LedApplyStatus ledStatus = LedApplyStatus::Idle;
 uint8_t ledRetryCount = 0;
 uint16_t pendingLedSequenceId = 0;
 uint32_t lastLedTxMs = 0;
 uint32_t lastLedAckMs = 0;
+uint32_t nextLedRetryDueMs = 0;
+uint32_t ledTxCount = 0;
+uint32_t ledAckCount = 0;
+uint32_t ledRetryCountTotal = 0;
+uint32_t ledDuplicateIgnoredCount = 0;
 
 bool sameColor(const RGBColor &left, const RGBColor &right){
   return left.r == right.r && left.g == right.g && left.b == right.b;
@@ -73,6 +80,20 @@ bool sameLedState(const LedWireState &left, const LedWireState &right){
     left.speed == right.speed &&
     left.mode == right.mode &&
     sameColor(left.color, right.color);
+}
+
+uint32_t ledRetryBackoffMs(){
+  uint32_t backoff = LedRetryBackoffBaseMs;
+  uint8_t shifts = ledRetryCount == 0 ? 0 : ledRetryCount - 1;
+  if(shifts > 5) shifts = 5;
+  while(shifts-- > 0 && backoff < LedRetryBackoffMaxMs / 2){
+    backoff *= 2;
+  }
+  return backoff > LedRetryBackoffMaxMs ? LedRetryBackoffMaxMs : backoff;
+}
+
+void setLedStatus(LedApplyStatus nextStatus){
+  ledStatus = nextStatus;
 }
 
 LedWireState desiredLedState(){
@@ -132,6 +153,11 @@ void refreshDiagnostics(){
   linkDiagnostics.desiredLedPower = desired.power;
   linkDiagnostics.desiredLedBrightness = desired.brightness;
   linkDiagnostics.desiredLedSpeed = desired.speed;
+  linkDiagnostics.activeLedMode =
+    hasAppliedLedState ? PacketBuilder::effectName(appliedLedState.mode) : "NONE";
+  linkDiagnostics.activeLedPower = hasAppliedLedState ? appliedLedState.power : false;
+  linkDiagnostics.activeLedBrightness = hasAppliedLedState ? appliedLedState.brightness : 0;
+  linkDiagnostics.activeLedSpeed = hasAppliedLedState ? appliedLedState.speed : 0;
   linkDiagnostics.lastSentLedMode =
     hasLastSentLedState ? PacketBuilder::effectName(lastSentLedState.mode) : "NONE";
   linkDiagnostics.lastSentLedPower = hasLastSentLedState ? lastSentLedState.power : false;
@@ -146,6 +172,10 @@ void refreshDiagnostics(){
   linkDiagnostics.ledRetryCount = ledRetryCount;
   linkDiagnostics.lastLedAckMs = lastLedAckMs;
   linkDiagnostics.lastLedErrReason = lastLedErrReason;
+  linkDiagnostics.ledTx = ledTxCount;
+  linkDiagnostics.ledAck = ledAckCount;
+  linkDiagnostics.ledRetry = ledRetryCountTotal;
+  linkDiagnostics.ledDuplicateIgnored = ledDuplicateIgnoredCount;
 }
 
 void reinitializeTransport(unsigned long now){
@@ -227,7 +257,7 @@ bool sendFullSync(unsigned long now, const char* reason){
   return true;
 }
 
-bool sendLedState(const LedWireState &state, unsigned long now, bool retry){
+bool sendLedState(const LedWireState &state, unsigned long now){
   char packet[Config::Esp8266MaxPacketSize + 1] = {};
   pendingLedSequenceId = nextSequenceId();
 
@@ -240,13 +270,15 @@ bool sendLedState(const LedWireState &state, unsigned long now, bool retry){
 
   if(PacketBuilder::setLedState(packet, sizeof(packet), lighting, state.speed, pendingLedSequenceId) == 0){
     copyText(lastLedErrReason, sizeof(lastLedErrReason), "led_packet_build_failed");
-    ledStatus = LedApplyStatus::Failed;
+    setLedStatus(LedApplyStatus::Error);
+    LOG_WARN(LogTag::LED, "[LED_SYNC] ack_failure reason=%s", lastLedErrReason);
     return false;
   }
 
   if(!sendPacket(packet, now)){
     copyText(lastLedErrReason, sizeof(lastLedErrReason), "led_send_failed");
-    ledStatus = LedApplyStatus::Failed;
+    setLedStatus(LedApplyStatus::Error);
+    LOG_WARN(LogTag::LED, "[LED_SYNC] ack_failure reason=%s", lastLedErrReason);
     return false;
   }
 
@@ -254,13 +286,13 @@ bool sendLedState(const LedWireState &state, unsigned long now, bool retry){
   lastSentLedState = state;
   hasPendingLedState = true;
   hasLastSentLedState = true;
-  ledStatus = LedApplyStatus::Pending;
+  setLedStatus(LedApplyStatus::WaitingAck);
   lastLedTxMs = now;
-  if(retry && ledRetryCount < 255) ledRetryCount++;
-  if(!retry) ledRetryCount = 0;
+  nextLedRetryDueMs = now + LedAckTimeoutMs;
+  ledTxCount++;
   LOG_INFO(
     LogTag::LED,
-    "[LED_TX] mode=%s brightness=%u speed=%u power=%u retry=%u",
+    "[LED_SYNC] tx mode=%s brightness=%u speed=%u power=%u retry=%u",
     PacketBuilder::effectName(state.mode),
     state.brightness,
     state.speed,
@@ -272,32 +304,75 @@ bool sendLedState(const LedWireState &state, unsigned long now, bool retry){
 
 void markLedResyncRequired(){
   ledResyncRequired = true;
-  hasPendingLedState = false;
+}
+
+void queueLedState(const LedWireState &state, unsigned long now, bool resetRetries){
+  if(hasPendingLedState && sameLedState(state, pendingLedState) && ledStatus == LedApplyStatus::PendingTx){
+    return;
+  }
+
+  pendingLedState = state;
+  hasPendingLedState = true;
   pendingLedSequenceId = 0;
+  nextLedRetryDueMs = 0;
+  if(resetRetries) ledRetryCount = 0;
+  setLedStatus(LedApplyStatus::PendingTx);
+  LOG_INFO(LogTag::LED, "[LED_SYNC] desired=%s", PacketBuilder::effectName(state.mode));
+  (void)now;
+}
+
+void scheduleLedRetry(unsigned long now, const char* reason){
+  if(ledRetryCount >= MaxLedRetries){
+    hasPendingLedState = false;
+    pendingLedSequenceId = 0;
+    setLedStatus(LedApplyStatus::Error);
+    LOG_WARN(LogTag::LED, "[LED_SYNC] ack_failure reason=%s retries_exhausted=%u", reason, ledRetryCount);
+    return;
+  }
+
+  if(ledRetryCount < 255) ledRetryCount++;
+  ledRetryCountTotal++;
+  nextLedRetryDueMs = now + ledRetryBackoffMs();
+  setLedStatus(LedApplyStatus::PendingTx);
+  LOG_WARN(LogTag::LED, "[LED_SYNC] retry=%u reason=%s", ledRetryCount, reason);
 }
 
 void serviceLedState(unsigned long now){
   if(connectionState != Esp8266ConnectionState::Running) return;
 
   const LedWireState desired = desiredLedState();
-  if(hasPendingLedState){
-    if(!sameLedState(desired, pendingLedState)){
-      sendLedState(desired, now, false);
+  if(ledResyncRequired){
+    ledResyncRequired = false;
+    queueLedState(desired, now, true);
+  }
+
+  if(ledStatus == LedApplyStatus::Idle || ledStatus == LedApplyStatus::Synced){
+    if(hasAppliedLedState && sameLedState(desired, appliedLedState)){
       return;
     }
-    if(now - lastLedTxMs >= LedAckTimeoutMs + LedRetryBackoffMs){
-      LOG_WARN(LogTag::LED, "LED state ACK timeout, retry=%u", (unsigned)(ledRetryCount + 1));
-      sendLedState(pendingLedState, now, true);
+    queueLedState(desired, now, true);
+  }
+
+  if(ledStatus == LedApplyStatus::WaitingAck){
+    if(hasPendingLedState && !sameLedState(desired, pendingLedState)){
+      queueLedState(desired, now, true);
+      return;
+    }
+    if(nextLedRetryDueMs != 0 && now >= nextLedRetryDueMs){
+      LOG_WARN(LogTag::LED, "[LED_SYNC] timeout seq=%u", pendingLedSequenceId);
+      scheduleLedRetry(now, "timeout");
     }
     return;
   }
 
-  if(ledStatus == LedApplyStatus::Failed && now - lastLedTxMs < LedRetryBackoffMs){
-    return;
-  }
-
-  if(ledResyncRequired || !hasAppliedLedState || !sameLedState(desired, appliedLedState)){
-    sendLedState(desired, now, ledStatus == LedApplyStatus::Failed);
+  if(ledStatus == LedApplyStatus::PendingTx){
+    if(!hasPendingLedState){
+      queueLedState(desired, now, true);
+    }
+    if(nextLedRetryDueMs != 0 && now < nextLedRetryDueMs){
+      return;
+    }
+    sendLedState(pendingLedState, now);
   }
 }
 
@@ -311,6 +386,17 @@ void markStateDirtyIfChanged(){
   if(revision == observedStateRevision) return;
   observedStateRevision = revision;
   const uint16_t mask = SystemStateStore::lastChangeMask();
+  if((mask & static_cast<uint16_t>(StateChange::Lighting)) != 0){
+    const LedWireState desired = desiredLedState();
+    const bool desiredChanged =
+      !hasAppliedLedState ||
+      !sameLedState(desired, appliedLedState) ||
+      (hasPendingLedState && !sameLedState(desired, pendingLedState)) ||
+      ledStatus == LedApplyStatus::Error;
+    if(desiredChanged){
+      queueLedState(desired, millis(), true);
+    }
+  }
   if((mask & static_cast<uint16_t>(StateChange::Protocol)) != 0){
     synchronization.requestSync();
   }
@@ -353,7 +439,7 @@ void handleLedAck(const Esp32ProtocolParser::Packet &packet, unsigned long now){
   heartbeat.recordPong(now);
   const uint16_t sequence = parseSequenceValue(tokenValue(packet, "SEQ"));
   if(!hasPendingLedState || sequence != pendingLedSequenceId){
-    LOG_WARN(LogTag::LED, "[LED_ACK] stale seq=%u pending=%u", sequence, pendingLedSequenceId);
+    LOG_WARN(LogTag::LED, "[LED_SYNC] stale_ack seq=%u pending=%u", sequence, pendingLedSequenceId);
     return;
   }
 
@@ -361,12 +447,18 @@ void handleLedAck(const Esp32ProtocolParser::Packet &packet, unsigned long now){
   hasAppliedLedState = true;
   hasPendingLedState = false;
   pendingLedSequenceId = 0;
+  nextLedRetryDueMs = 0;
   ledResyncRequired = false;
-  ledStatus = LedApplyStatus::Applied;
+  setLedStatus(LedApplyStatus::Synced);
   ledRetryCount = 0;
   lastLedAckMs = now;
+  ledAckCount++;
+  if(tokenValue(packet, "DUP") != nullptr){
+    ledDuplicateIgnoredCount++;
+  }
   copyText(lastLedErrReason, sizeof(lastLedErrReason), "");
-  LOG_INFO(LogTag::LED, "[LED_ACK] mode=%s", PacketBuilder::effectName(appliedLedState.mode));
+  LOG_INFO(LogTag::LED, "[LED_SYNC] ack_success mode=%s", PacketBuilder::effectName(appliedLedState.mode));
+  LOG_INFO(LogTag::LED, "[LED_SYNC] synced");
 }
 
 void handleLedError(const Esp32ProtocolParser::Packet &packet, unsigned long now){
@@ -374,18 +466,15 @@ void handleLedError(const Esp32ProtocolParser::Packet &packet, unsigned long now
   const uint16_t sequence = parseSequenceValue(tokenValue(packet, "SEQ"));
   const char* reason = tokenValue(packet, "REASON");
   copyText(lastLedErrReason, sizeof(lastLedErrReason), reason != nullptr ? reason : "UNKNOWN");
-  if(hasPendingLedState && sequence == pendingLedSequenceId){
-    hasPendingLedState = false;
-    pendingLedSequenceId = 0;
+  if(!hasPendingLedState || sequence != pendingLedSequenceId){
+    LOG_WARN(LogTag::LED, "[LED_SYNC] stale_failure seq=%u pending=%u reason=%s", sequence, pendingLedSequenceId, lastLedErrReason);
+    return;
   }
-  ledStatus = LedApplyStatus::Failed;
+
+  pendingLedSequenceId = 0;
   lastLedTxMs = now;
-  LOG_WARN(
-    LogTag::LED,
-    "[LED_ERR] mode=%s reason=%s",
-    tokenValue(packet, "MODE") != nullptr ? tokenValue(packet, "MODE") : "UNKNOWN",
-    lastLedErrReason
-  );
+  LOG_WARN(LogTag::LED, "[LED_SYNC] ack_failure reason=%s", lastLedErrReason);
+  scheduleLedRetry(now, lastLedErrReason);
 }
 
 void handleAck(const Esp32ProtocolParser::Packet &packet, unsigned long now){
@@ -435,12 +524,14 @@ void handleParsedPacket(Esp32ProtocolParser::Packet &packet, unsigned long now){
     return;
   }
 
-  if(Esp32ProtocolParser::equals(command, "ACK_LED_STATE")){
+  if(Esp32ProtocolParser::equals(command, "ACK_LED_STATE") ||
+     Esp32ProtocolParser::equals(command, "ACK_SUCCESS")){
     handleLedAck(packet, now);
     return;
   }
 
-  if(Esp32ProtocolParser::equals(command, "ERR_LED_STATE")){
+  if(Esp32ProtocolParser::equals(command, "ERR_LED_STATE") ||
+     Esp32ProtocolParser::equals(command, "ACK_FAILURE")){
     handleLedError(packet, now);
     return;
   }
@@ -621,9 +712,14 @@ void begin() {
   markLedResyncRequired();
   hasLastSentLedState = false;
   hasAppliedLedState = false;
-  ledStatus = LedApplyStatus::Applied;
+  ledStatus = LedApplyStatus::Idle;
   ledRetryCount = 0;
   lastLedAckMs = 0;
+  nextLedRetryDueMs = 0;
+  ledTxCount = 0;
+  ledAckCount = 0;
+  ledRetryCountTotal = 0;
+  ledDuplicateIgnoredCount = 0;
   copyText(lastLedErrReason, sizeof(lastLedErrReason), "");
   resetAssembler();
   resetMalformedBurst();
@@ -672,9 +768,11 @@ const char* stateName(Esp8266ConnectionState state){
 
 const char* ledStatusName(LedApplyStatus status){
   switch(status){
-    case LedApplyStatus::Pending: return "PENDING";
-    case LedApplyStatus::Applied: return "APPLIED";
-    case LedApplyStatus::Failed: return "FAILED";
+    case LedApplyStatus::Idle: return "IDLE";
+    case LedApplyStatus::PendingTx: return "PENDING_TX";
+    case LedApplyStatus::WaitingAck: return "WAITING_ACK";
+    case LedApplyStatus::Synced: return "SYNCED";
+    case LedApplyStatus::Error: return "ERROR";
   }
   return "UNKNOWN";
 }

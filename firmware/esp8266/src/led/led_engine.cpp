@@ -7,7 +7,8 @@ LedEngine::LedEngine(StateCache& state)
       pixels_(Config::NeoPixelCount, Pins::NeoPixelData, NEO_GRB + NEO_KHZ800),
       solidEffect_(pixels_, state_),
       breathingEffect_(pixels_, state_),
-      rainbowEffect_(pixels_) {}
+      rainbowEffect_(pixels_),
+      ambientEffect_(pixels_, state_) {}
 
 void LedEngine::begin() {
   pixels_.begin();
@@ -56,19 +57,34 @@ void LedEngine::setEffect(LedEffect effect) {
   applyState();
 }
 
-void LedEngine::applyLedState(LedEffect effect, uint8_t brightness, uint8_t speed, bool enabled, RgbColor color) {
+bool LedEngine::applyLedState(LedEffect effect, uint8_t brightness, uint8_t speed, bool enabled, RgbColor color) {
+  const bool requestedEnabled = enabled && effect != LedEffect::None;
+  const RgbColor currentColor = state_.color();
+  const bool duplicate =
+      state_.ledsEnabled() == requestedEnabled &&
+      state_.activeEffect() == effect &&
+      state_.brightness() == brightness &&
+      speed_ == speed &&
+      currentColor.r == color.r &&
+      currentColor.g == color.g &&
+      currentColor.b == color.b;
+
+  if (duplicate) {
+    diagnostics_.duplicateIgnored++;
+    return false;
+  }
+
   const bool wasEnabled = state_.ledsEnabled();
   const LedEffect previousEffect = state_.activeEffect();
-  const RgbColor previousColor = state_.color();
   const bool colorChanged =
-      previousColor.r != color.r || previousColor.g != color.g || previousColor.b != color.b;
+      currentColor.r != color.r || currentColor.g != color.g || currentColor.b != color.b;
   const bool brightnessChanged = state_.brightness() != brightness;
   const bool speedChanged = speed_ != speed;
 
   state_.setBrightness(brightness);
   state_.setColor(color.r, color.g, color.b);
   state_.setActiveEffect(effect);
-  state_.setLedsEnabled(enabled && effect != LedEffect::None);
+  state_.setLedsEnabled(requestedEnabled);
   speed_ = speed;
   pixels_.setBrightness(brightness);
 
@@ -80,7 +96,7 @@ void LedEngine::applyLedState(LedEffect effect, uint8_t brightness, uint8_t spee
       pixels_.show();
       effectStartedMs_ = millis();
     }
-    return;
+    return true;
   }
 
   Effect* nextEffect = selectEffect(effect);
@@ -92,13 +108,13 @@ void LedEngine::applyLedState(LedEffect effect, uint8_t brightness, uint8_t spee
     pixels_.clear();
     pixels_.show();
     effectStartedMs_ = millis();
-    return;
+    return true;
   }
 
   if (effectChanged) {
     activeEffect_->begin();
     effectStartedMs_ = millis();
-    return;
+    return true;
   }
 
   if (colorChanged || brightnessChanged || speedChanged) {
@@ -108,6 +124,8 @@ void LedEngine::applyLedState(LedEffect effect, uint8_t brightness, uint8_t spee
       activeEffect_->update();
     }
   }
+
+  return true;
 }
 
 void LedEngine::applyState() {
@@ -157,6 +175,8 @@ const char* LedEngine::effectName(LedEffect effect) {
       return "BREATHING";
     case LedEffect::Rainbow:
       return "RAINBOW";
+    case LedEffect::Ambient:
+      return "AMBIENT";
   }
   return "NONE";
 }
@@ -169,6 +189,8 @@ Effect* LedEngine::selectEffect(LedEffect effect) {
       return &breathingEffect_;
     case LedEffect::Rainbow:
       return &rainbowEffect_;
+    case LedEffect::Ambient:
+      return &ambientEffect_;
     case LedEffect::None:
       return nullptr;
   }

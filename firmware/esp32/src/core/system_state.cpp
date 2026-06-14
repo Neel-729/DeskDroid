@@ -61,6 +61,24 @@ void setLightingFromPreset(LedIdlePreset preset){
       state.lighting.mode = AnimationMode::Rainbow;
       state.lighting.color = RGBColor(30, 0, 20);
       break;
+
+    case IDLE_AMBIENT:
+      state.lighting.enabled = true;
+      state.lighting.mode = AnimationMode::Ambient;
+      state.lighting.color = RGBColor(30, 20, 10);
+      break;
+
+    case IDLE_AMBIENT:
+      state.lighting.enabled = true;
+      state.lighting.mode = AnimationMode::Ambient;
+      state.lighting.color = RGBColor(30, 20, 10);
+      break;
+
+    case IDLE_AMBIENT:
+      state.lighting.enabled = true;
+      state.lighting.mode = AnimationMode::Ambient;
+      state.lighting.color = RGBColor(30, 20, 10);
+      break;
   }
 }
 

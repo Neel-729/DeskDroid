@@ -14,6 +14,7 @@ struct LedEngineDiagnostics {
   uint8_t brightness = 0;
   uint8_t speed = 0;
   uint32_t animationRuntimeMs = 0;
+  uint32_t duplicateIgnored = 0;
   uint32_t lastCommandMs = 0;
   char lastCommand[16] = "";
   char lastResult[16] = "";
@@ -31,7 +32,7 @@ class LedEngine {
   void setSolidColor(uint8_t r, uint8_t g, uint8_t b);
   void setBrightness(uint8_t brightness);
   void setEffect(LedEffect effect);
-  void applyLedState(LedEffect effect, uint8_t brightness, uint8_t speed, bool enabled, RgbColor color);
+  bool applyLedState(LedEffect effect, uint8_t brightness, uint8_t speed, bool enabled, RgbColor color);
   void applyState();
   void recordCommandResult(const char* command, const char* result, const char* reason);
   const LedEngineDiagnostics& diagnostics() const;
@@ -47,6 +48,7 @@ class LedEngine {
   SolidColorEffect solidEffect_;
   BreathingEffect breathingEffect_;
   RainbowEffect rainbowEffect_;
+  AmbientEffect ambientEffect_;
   Effect* activeEffect_ = nullptr;
   LedEffect activeEffectId_ = LedEffect::None;
   uint8_t speed_ = 5;

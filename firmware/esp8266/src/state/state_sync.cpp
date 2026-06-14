@@ -141,6 +141,10 @@ bool StateSync::parseEffect(const char* value, LedEffect& effect) const {
     effect = LedEffect::Rainbow;
     return true;
   }
+  if (equals(value, "AMBIENT")) {
+    effect = LedEffect::Ambient;
+    return true;
+  }
   return false;
 }
 

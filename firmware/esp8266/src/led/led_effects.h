@@ -50,3 +50,31 @@ class RainbowEffect : public Effect {
   Adafruit_NeoPixel& pixels_;
   uint16_t hue_ = 0;
 };
+
+class AmbientEffect : public Effect {
+ public:
+  AmbientEffect(Adafruit_NeoPixel& pixels, const StateCache& state);
+
+  void begin() override;
+  void update() override;
+
+ private:
+  Adafruit_NeoPixel& pixels_;
+  const StateCache& state_;
+  float phase_ = 0.0F;
+  float colorPhase_ = 0.0F;
+};
+
+class AmbientEffect : public Effect {
+ public:
+  AmbientEffect(Adafruit_NeoPixel& pixels, const StateCache& state);
+
+  void begin() override;
+  void update() override;
+
+ private:
+  Adafruit_NeoPixel& pixels_;
+  const StateCache& state_;
+  float phase_ = 0.0F;
+  float colorPhase_ = 0.0F;
+};

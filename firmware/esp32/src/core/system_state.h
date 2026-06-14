@@ -19,6 +19,7 @@ enum class EffectType : uint8_t {
   Solid,
   Breathing,
   Rainbow,
+  Ambient,
 };
 
 using AnimationMode = EffectType;

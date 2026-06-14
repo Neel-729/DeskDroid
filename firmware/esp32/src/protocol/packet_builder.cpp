@@ -83,6 +83,7 @@ const char* effectName(EffectType effect) {
     case EffectType::Solid: return "SOLID";
     case EffectType::Breathing: return "BREATHING";
     case EffectType::Rainbow: return "RAINBOW";
+    case EffectType::Ambient: return "AMBIENT";
   }
 
   return "NONE";

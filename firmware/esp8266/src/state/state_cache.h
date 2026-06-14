@@ -15,6 +15,7 @@ enum class LedEffect : uint8_t {
   Solid,
   Breathing,
   Rainbow,
+  Ambient,
 };
 
 struct StateSnapshot {
