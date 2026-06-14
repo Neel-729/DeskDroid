@@ -3,6 +3,8 @@
 #include <WiFi.h>
 
 #include "../core/events.h"
+#include "../core/logging.h"
+#include "../core/persistent_storage.h"
 #include "../core/settings_store.h"
 #include "../core/time_service.h"
 #include "../features/reminders.h"
@@ -67,7 +69,35 @@ bool setLightingEnabled(bool enabled){
 }
 
 bool setRelay(uint8_t relayNumber, bool enabled){
-  return SystemStateStore::setRelay(relayNumber, enabled);
+  // Get current relay states before change
+  bool relayStatesBefore[SystemState::RelayCount];
+  SystemStateStore::getRelayStates(relayStatesBefore, SystemState::RelayCount);
+  
+  // Attempt to change the relay state
+  if(!SystemStateStore::setRelay(relayNumber, enabled)){
+    return false;
+  }
+  
+  // Get relay states after change
+  bool relayStatesAfter[SystemState::RelayCount];
+  SystemStateStore::getRelayStates(relayStatesAfter, SystemState::RelayCount);
+  
+  // Check if state actually changed
+  bool changed = false;
+  for(uint8_t i = 0; i < SystemState::RelayCount; i++){
+    if(relayStatesBefore[i] != relayStatesAfter[i]){
+      changed = true;
+      break;
+    }
+  }
+  
+  // Only persist if state actually changed
+  if(changed){
+    LOG_INFO(LogTag::SYSTEM, "[PERSIST] Relay %d changed to %s", relayNumber, enabled ? "ON" : "OFF");
+    PersistentStorage::saveRelayStates(relayStatesAfter, SystemState::RelayCount);
+  }
+  
+  return true;
 }
 
 bool startTimer(uint32_t nowMs){

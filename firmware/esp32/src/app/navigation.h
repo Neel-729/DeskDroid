@@ -15,4 +15,10 @@ void rotateMainState(int step);
 bool hasStateChanged();
 void clearStateChanged();
 void markChanged();
-}
+
+// New stack-based navigation
+void back();
+void goHome();
+bool isAtHome();
+uint8_t stackDepth();
+}  // namespace AppNavigation
