@@ -57,6 +57,7 @@ void runInputTask(FrameContext &context);
 void runEventTask(FrameContext &context);
 void runUiTask(FrameContext &context);
 void runDiagnosticsTask(FrameContext &context);
+void monitorLongPressHome(unsigned long now);
 void flushUiFrame();
 UiScreens::TimerScreenData timerScreenData(unsigned long now);
 UiScreens::StopwatchScreenData stopwatchScreenData();
