@@ -137,22 +137,41 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       renderLightScheduleEdit("Lights Off",settings.lightsOffHour,settings.lightsOffMinute,renderState.blinkState,renderState.scheduleHourSelected);
       break;
 
-    case 7:
+    case 7:{
+      // Auto Return Home - Display with selection
+      const char* timeouts[] = {"OFF","15s","30s","60s","2m","5m"};
+      uint8_t selectedIndex = renderState.adjustIdleTimeoutIndex;
+      
+      writeRow(0,"Auto Return Home");
+      char buf[17];
+      // Show selected option with >> indicator
+      if(renderState.blinkState){
+        // During edit, show >> selected_option
+        snprintf(buf, sizeof(buf), ">> %s", timeouts[selectedIndex]);
+      } else {
+        // When not showing, display blank (blinking effect)
+        strcpy(buf, "");
+      }
+      writeRow(1, buf);
+      break;
+    }
+
+    case 8:
       writeRow(0,"Buzzer");
       writeRow(1,settings.buzzer?"ON":"OFF");
       break;
 
-    case 8:
+    case 9:
       writeRow(0,"Quotes");
       writeRow(1,settings.quotes?"ON":"OFF");
       break;
 
-    case 9:
+    case 10:
       writeRow(0,"Time Format");
       writeRow(1,settings.format24?"24H":"12H");
       break;
 
-    case 10:{
+    case 11:{
       int h=renderState.adjustHour;
       int m=renderState.adjustMinute;
       if(!renderState.blinkState){
@@ -172,7 +191,7 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
     }
 
-    case 11:{
+    case 12:{
       int d=renderState.adjustDay;
       int mo=renderState.adjustMonth;
       int y=renderState.adjustYear;
@@ -197,7 +216,7 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
     }
 
-    case 12:
+    case 13:
       writeRow(0,"DeskDroid");
       char versionBuf[17];
       snprintf(versionBuf,sizeof(versionBuf),"v%s",renderState.firmwareVersion);

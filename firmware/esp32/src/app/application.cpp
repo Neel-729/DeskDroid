@@ -5,13 +5,16 @@
 
 #include "application_commands.h"
 #include "hardware_requests.h"
+#include "idle_manager.h"
 #include "input_service.h"
 #include "navigation.h"
+#include "navigation_stack.h"
 #include "settings_flow.h"
 #include "system_context.h"
 #include "../core/events.h"
 #include "../core/fault_tracker.h"
 #include "../core/logging.h"
+#include "../core/persistent_storage.h"
 #include "../core/scheduler.h"
 #include "../core/settings_store.h"
 #include "../core/system_state.h"
@@ -32,6 +35,14 @@
 namespace {
 
 constexpr const char* FIRMWARE_VERSION = "2.6.2";
+constexpr uint8_t ENCODER_BUTTON_PIN = 5;
+constexpr unsigned long LONG_PRESS_HOME_DURATION = 1000;   // 1000ms threshold
+constexpr unsigned long VISUAL_FEEDBACK_THRESHOLD = 500;   // Show feedback at 500ms
+
+// Long press home detection state
+bool buttonPressedPrevious = false;
+unsigned long buttonPressStartMs = 0;
+bool longPressHomePending = false;
 
 SystemContext systemContext;
 
@@ -42,10 +53,12 @@ void runLightingTask(FrameContext &context);
 void runTimerTask(FrameContext &context);
 void runReminderCheckTask(FrameContext &context);
 void runReminderAlarmTask(FrameContext &context);
+void runNavMonitorTask(FrameContext &context);
 void runInputTask(FrameContext &context);
 void runEventTask(FrameContext &context);
 void runUiTask(FrameContext &context);
 void runDiagnosticsTask(FrameContext &context);
+void monitorLongPressHome(unsigned long now);
 void flushUiFrame();
 bool flushUiFrame(bool force);
 UiScreens::TimerScreenData timerScreenData(unsigned long now);
@@ -63,6 +76,7 @@ ScheduledTask scheduledTasks[] = {
   { "timer", 50, 0, 0, 1000, 0, 0, true, runTimerTask },
   { "reminder-check", 1000, 0, 0, 2500, 0, 0, true, runReminderCheckTask },
   { "reminder-alarm", 50, 0, 0, 1000, 0, 0, true, runReminderAlarmTask },
+  { "nav-monitor", 0, 0, 0, 50, 0, 0, true, runNavMonitorTask },
   { "input", 10, 0, 0, 1000, 0, 0, true, runInputTask },
   { "events", 0, 0, 0, 2500, 0, 0, true, runEventTask },
   { "ui", 50, 0, 0, 12000, 0, 0, true, runUiTask },
@@ -137,6 +151,24 @@ void initHardware(){
   SettingsStore::begin();
   SettingsFlow::begin();
   SystemStateStore::begin(SettingsFlow::settings());
+  
+  // Initialize navigation stack
+  NavigationStack::begin();
+  
+  // Initialize idle manager with timeout from settings
+  IdleManager::begin();
+  IdleManager::setIdleTimeout((IdleManager::IdleTimeout)SettingsFlow::settings().idleTimeoutSeconds);
+  
+  // Initialize persistent storage and restore relay states
+  PersistentStorage::begin();
+  bool savedRelayStates[SystemState::RelayCount] = {};
+  if(PersistentStorage::loadRelayStates(savedRelayStates, SystemState::RelayCount)){
+    LOG_INFO(LogTag::SYSTEM, "[PERSIST] Restoring relay states from NVS");
+    SystemStateStore::restoreRelayStates(savedRelayStates, SystemState::RelayCount);
+  } else {
+    LOG_INFO(LogTag::SYSTEM, "[PERSIST] No saved relay state found, using defaults");
+  }
+  
   HardwareRequests::beginLocal(SettingsFlow::settings());
 
   if(!TimeService::begin()){
@@ -251,6 +283,12 @@ void checkTimerDone(unsigned long now){
 void handleEvent(const AppEvent &event, unsigned long now){
   EventType ev = event.type;
   DeviceSettings &settings = SettingsFlow::settings();
+
+  // Track user activity for idle manager
+  if(ev == EVENT_CLICK || ev == EVENT_DOUBLE_CLICK || ev == EVENT_LONG_PRESS ||
+     ev == EVENT_ROTATE_CW || ev == EVENT_ROTATE_CCW){
+    IdleManager::notifyActivity(now);
+  }
 
   switch(ev){
     case EVENT_TIMER_DONE:
@@ -592,6 +630,51 @@ void runReminderAlarmTask(FrameContext &context){
   updateReminderAlarm(context.nowMs);
 }
 
+void runNavMonitorTask(FrameContext &context){
+  monitorLongPressHome(context.nowMs);
+}
+
+void monitorLongPressHome(unsigned long now){
+  // Read current button state (pressed = LOW on input pullup)
+  bool buttonPressed = (digitalRead(ENCODER_BUTTON_PIN) == LOW);
+  
+  // Button press started
+  if(buttonPressed && !buttonPressedPrevious){
+    buttonPressStartMs = now;
+    longPressHomePending = false;
+    LOG_INFO(LogTag::APP, "[NAV] Button pressed, monitoring for long press home");
+  }
+  
+  // Button is being held
+  if(buttonPressed && buttonPressedPrevious){
+    unsigned long pressedDurationMs = now - buttonPressStartMs;
+    
+    // Show visual feedback at threshold (but don't trigger yet)
+    if(!longPressHomePending && pressedDurationMs >= VISUAL_FEEDBACK_THRESHOLD){
+      LOG_INFO(LogTag::APP, "[NAV] Visual feedback threshold reached (%ldms)", pressedDurationMs);
+      // Could set a flag here to show "Returning Home..." on screen
+    }
+    
+    // Trigger long press home at threshold
+    if(pressedDurationMs >= LONG_PRESS_HOME_DURATION && !longPressHomePending){
+      longPressHomePending = true;
+      LOG_INFO(LogTag::APP, "[NAV] Long press home triggered (%ldms)", pressedDurationMs);
+      AppNavigation::goHome();
+      AudioService::beep(200);  // Distinct beep for long press home
+    }
+  }
+  
+  // Button released
+  if(!buttonPressed && buttonPressedPrevious){
+    if(longPressHomePending){
+      LOG_INFO(LogTag::APP, "[NAV] Long press home completed");
+    }
+    longPressHomePending = false;
+  }
+  
+  buttonPressedPrevious = buttonPressed;
+}
+
 void runInputTask(FrameContext &context){
   (void)context;
   EventType inputEvent=InputService::readEvent();
@@ -606,6 +689,16 @@ void runInputTask(FrameContext &context){
 void runEventTask(FrameContext &context){
   if(processEvents(context.nowMs)){
     runLightingTask(context);
+  }
+  
+  // Check for idle timeout and auto-return to dashboard
+  if(IdleManager::update(context.nowMs)){
+    // Idle timeout reached - return to home
+    if(!AppNavigation::isAtHome()){
+      LOG_INFO(LogTag::APP, "[IDLE] Auto-return to dashboard triggered");
+      AppNavigation::goHome();
+      AudioService::beep(150);  // Short beep for auto-return
+    }
   }
 }
 

@@ -14,6 +14,7 @@ struct DeviceSettings {
   uint8_t lightsOnMinute = 0;
   uint8_t lightsOffHour = 22;
   uint8_t lightsOffMinute = 0;
+  uint8_t idleTimeoutSeconds = 30;  // Auto-return to dashboard timeout (0=OFF)
 };
 
 struct ReminderRecord {

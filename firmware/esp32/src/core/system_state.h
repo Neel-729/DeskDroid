@@ -108,6 +108,8 @@ void begin(const DeviceSettings &settings);
 const SystemState &current();
 
 bool setRelay(uint8_t relayNumber, bool enabled);
+void restoreRelayStates(const bool* states, uint8_t count);
+void getRelayStates(bool* states, uint8_t count);
 void setLightingEnabled(bool enabled);
 void setLightingScheduleAllowed(bool allowed);
 void setBacklightEnabled(bool enabled);

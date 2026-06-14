@@ -27,6 +27,8 @@ struct Snapshot {
   uint8_t adjustDateField;
   uint8_t relayIndex;
   bool relayEnabled;
+  uint8_t idleTimeoutSeconds;
+  uint8_t adjustIdleTimeoutIndex;
 };
 
 void begin();

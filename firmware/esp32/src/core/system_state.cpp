@@ -160,6 +160,23 @@ bool setRelay(uint8_t relayNumber, bool enabled){
   return true;
 }
 
+void restoreRelayStates(const bool* states, uint8_t count){
+  if(!states || count == 0 || count > SystemState::RelayCount) return;
+  
+  for(uint8_t i = 0; i < count; i++){
+    state.relayStates[i] = states[i];
+  }
+  markChanged(StateChange::Protocol);
+}
+
+void getRelayStates(bool* states, uint8_t count){
+  if(!states || count == 0 || count > SystemState::RelayCount) return;
+  
+  for(uint8_t i = 0; i < count; i++){
+    states[i] = state.relayStates[i];
+  }
+}
+
 void setLightingEnabled(bool enabled){
   if(state.lighting.enabled == enabled) return;
   state.lighting.enabled = enabled;
