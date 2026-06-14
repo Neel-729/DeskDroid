@@ -92,6 +92,15 @@ void reset() {
   LOG_INFO(LogTag::APP, "[NAV] Stack reset to HOME");
 }
 
+void replace(AppState state) {
+  if (stackDepth == 0) {
+    push(state);
+    return;
+  }
+  stack[stackDepth - 1] = state;
+  LOG_INFO(LogTag::APP, "[NAV] Replaced top of stack, depth %d", stackDepth);
+}
+
 void debugPrint() {
   Serial.printf("[NAV] Stack depth: %d\n", stackDepth);
   for (uint8_t i = 0; i < stackDepth; i++) {

@@ -60,7 +60,7 @@ void sanitizeLoadedSettings(){
   if(deviceSettings.lightsOffHour > 23) deviceSettings.lightsOffHour = 22;
   if(deviceSettings.lightsOffMinute > 59) deviceSettings.lightsOffMinute = 0;
   if(deviceSettings.ledBrightness > 10) deviceSettings.ledBrightness = 6;
-  if(deviceSettings.idlePreset > IDLE_PULSE) deviceSettings.idlePreset = IDLE_STATIC;
+  if(deviceSettings.idlePreset > IDLE_AMBIENT) deviceSettings.idlePreset = IDLE_STATIC;
 }
 
 void resetEditModes(){
@@ -189,8 +189,8 @@ void adjustValue(int step){
   }
   else if(settingsIndex==1){
     int val = deviceSettings.idlePreset + step;
-    if(val < 0) val = IDLE_PULSE;
-    if(val > IDLE_PULSE) val = IDLE_OFF;
+    if(val < 0) val = IDLE_AMBIENT;
+    if(val > IDLE_AMBIENT) val = IDLE_OFF;
     deviceSettings.idlePreset = val;
     AppCommands::applySettings(deviceSettings);
     AppCommands::setIdlePreset((LedIdlePreset)val);

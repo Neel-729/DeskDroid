@@ -58,7 +58,7 @@ bool setLedMode(LedState mode){
 }
 
 bool setIdlePreset(LedIdlePreset preset){
-  if(preset > IDLE_PULSE) return false;
+  if(preset > IDLE_AMBIENT) return false;
   SystemStateStore::setIdlePreset(preset);
   return true;
 }

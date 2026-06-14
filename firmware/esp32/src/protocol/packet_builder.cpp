@@ -86,7 +86,6 @@ const char* effectName(EffectType effect) {
     case EffectType::Ambient: return "AMBIENT";
   }
 
-  return "NONE";
-}
+  return "NONE";}
 
 }  // namespace PacketBuilder

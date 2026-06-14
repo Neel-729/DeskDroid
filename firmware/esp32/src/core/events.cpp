@@ -3,7 +3,7 @@
 #include "logging.h"
 
 namespace {
-constexpr uint8_t EVENT_QUEUE_SIZE = 16;
+constexpr uint8_t EVENT_QUEUE_SIZE = 64;
 AppEvent eventQueue[EVENT_QUEUE_SIZE];
 uint8_t eventQueueHead = 0;
 uint8_t eventQueueTail = 0;
@@ -53,6 +53,14 @@ bool enqueueEvent(EventType type, EventSource source){
 }
 
 bool enqueueEncoderEvent(EventType type, int8_t direction){
+  if (eventQueueHead != eventQueueTail) {
+    uint8_t prevHead = (eventQueueHead == 0) ? (EVENT_QUEUE_SIZE - 1) : (eventQueueHead - 1);
+    if (eventQueue[prevHead].type == type && eventQueue[prevHead].source == EventSource::INPUTS) {
+      eventQueue[prevHead].payload.encoder.direction += direction;
+      return true;
+    }
+  }
+
   AppEvent event = {};
   event.type = type;
   event.source = EventSource::INPUTS;

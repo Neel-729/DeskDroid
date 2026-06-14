@@ -22,7 +22,7 @@ constexpr uint8_t MaxCommandsPerUpdate = 1;
 
 constexpr uint32_t HeartbeatIntervalMs = 1000;
 constexpr uint32_t ConnectionTimeoutMs = 5000;
-constexpr uint16_t LedFrameIntervalMs = 16;
+constexpr uint16_t LedFrameIntervalMs = 10;
 
 #ifndef DESKDROID_ENABLE_LOGGING
 #define DESKDROID_ENABLE_LOGGING 0

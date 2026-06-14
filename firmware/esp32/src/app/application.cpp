@@ -34,7 +34,7 @@
 
 namespace {
 
-constexpr const char* FIRMWARE_VERSION = "2.6.2";
+constexpr const char* FIRMWARE_VERSION = "2.6.5";
 constexpr uint8_t ENCODER_BUTTON_PIN = 5;
 constexpr unsigned long LONG_PRESS_HOME_DURATION = 1000;   // 1000ms threshold
 constexpr unsigned long VISUAL_FEEDBACK_THRESHOLD = 500;   // Show feedback at 500ms
@@ -703,6 +703,7 @@ void runEventTask(FrameContext &context){
 }
 
 void runUiTask(FrameContext &context){
+  AppNavigation::commit();
   const uint32_t frameStartUs = micros();
   const unsigned long now = context.nowMs;
   DeviceSettings &settings = SettingsFlow::settings();

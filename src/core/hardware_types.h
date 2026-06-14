@@ -16,4 +16,6 @@ enum LedIdlePreset : uint8_t {
   IDLE_RAINBOW,
   IDLE_PULSE,
   IDLE_AMBIENT
+},
+  IDLE_AMBIENT
 };

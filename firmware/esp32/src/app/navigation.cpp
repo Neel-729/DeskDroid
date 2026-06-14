@@ -5,6 +5,9 @@
 
 namespace {
 
+AppState nextState = STATE_CLOCK;
+bool transitionPending = false;
+
 AppState reminderResumeState = STATE_CLOCK;
 bool stateChanged = true;
 
@@ -25,6 +28,13 @@ int mainStateIndex(AppState state){
   return 0;
 }
 
+bool isMainState(AppState state) {
+    for (uint8_t i = 0; i < MAIN_STATE_COUNT; i++) {
+        if (MAIN_STATES[i] == state) return true;
+    }
+    return false;
+}
+
 }
 
 namespace AppNavigation {
@@ -37,11 +47,11 @@ AppState resumeAfterReminder(){
   return reminderResumeState;
 }
 
-void enter(AppState nextState){
-  if(current() != nextState){
-    NavigationStack::push(nextState);
+void enter(AppState newState){
+  if(current() != newState){
+    nextState = newState;
+    transitionPending = true;
   }
-  stateChanged = true;
 }
 
 void setResumeAfterReminder(AppState state){
@@ -52,7 +62,8 @@ void rotateMainState(int step){
   int idx = mainStateIndex(current()) + step;
   if(idx < 0) idx = MAIN_STATE_COUNT - 1;
   if(idx >= MAIN_STATE_COUNT) idx = 0;
-  enter(MAIN_STATES[idx]);
+  nextState = MAIN_STATES[idx];
+  transitionPending = true;
 }
 
 bool hasStateChanged(){
@@ -67,11 +78,26 @@ void markChanged(){
   stateChanged = true;
 }
 
+void commit(){
+    if (!transitionPending) return;
+
+    if (isMainState(nextState) && isMainState(current())) {
+        NavigationStack::replace(nextState);
+    } else if (nextState == NavigationStack::peek()) {
+        NavigationStack::pop();
+    } else {
+        NavigationStack::push(nextState);
+    }
+
+    transitionPending = false;
+    stateChanged = true;
+}
+
 void back(){
-  if(!NavigationStack::pop()){
-    LOG_INFO(LogTag::APP, "[NAV] Back at home, no-op");
+  if(!NavigationStack::isAtHome()){
+    nextState = NavigationStack::peek(); 
+    transitionPending = true;
   }
-  stateChanged = true;
 }
 
 void goHome(){
@@ -88,4 +114,4 @@ uint8_t stackDepth(){
   return NavigationStack::depth();
 }
 
-}  // namespace AppNavigation
+}

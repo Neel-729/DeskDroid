@@ -102,7 +102,7 @@ void renderSettingsScreen(AppState state, const DeviceSettings &settings, const 
       break;
 
     case 1:{
-      const char* modes[] = {"Off","Static","Breath","Rainbow","Pulse"};
+      const char* modes[] = {"Off","Static","Breath","Rainbow","Pulse","Ambient"};
       writeRow(0,"LED Mode");
       writeRow(1,modes[settings.idlePreset]);
       break;

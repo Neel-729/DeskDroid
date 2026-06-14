@@ -70,10 +70,11 @@ EventType readButtonEvent(){
     buttonDown=false;
     if(duration>LONG_PRESS) return EVENT_LONG_PRESS;
 
-    if(singlePressWaiting && (now-singlePressTime<DOUBLE_PRESS_TIME)){
+    if(singlePressWaiting && (now-buttonDownTime<DOUBLE_PRESS_TIME)){
       singlePressWaiting=false;
       return EVENT_DOUBLE_CLICK;
     }
+    
     singlePressWaiting=true;
     singlePressTime=now;
   }

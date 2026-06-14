@@ -8,6 +8,7 @@ namespace AppNavigation {
 AppState current();
 AppState resumeAfterReminder();
 
+void commit();
 void enter(AppState nextState);
 void setResumeAfterReminder(AppState state);
 void rotateMainState(int step);

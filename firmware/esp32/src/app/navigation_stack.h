@@ -42,6 +42,9 @@ uint8_t maxDepth();
 /// Reset stack to home only
 void reset();
 
+/// Replace the top of the stack
+void replace(AppState state);
+
 /// Debug: Print stack contents to Serial
 void debugPrint();
 

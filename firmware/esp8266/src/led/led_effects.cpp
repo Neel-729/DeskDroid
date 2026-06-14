@@ -71,108 +71,34 @@ void AmbientEffect::begin() {
 
 void AmbientEffect::update() {
   // Slow brightness breathing
-  phase_ += 0.02F;
+  phase_ += 0.01F;
   if (phase_ > TWO_PI) {
     phase_ -= TWO_PI;
   }
-  
+
   // Very slow color transition through warm ambient tones
-  colorPhase_ += 0.005F;
+  colorPhase_ += 0.0025F;
   if (colorPhase_ > TWO_PI) {
     colorPhase_ -= TWO_PI;
   }
-  
+
+  // Calculate brightness with a gentle sine wave, ensuring it's perceptually linear
   const float brightnessWave = (sin(phase_) + 1.0F) * 0.5F;
-  const float floor = 0.15F;
-  const float brightness = floor + ((1.0F - floor) * brightnessWave);
-  
-  // Cycle through warm colors: warm white -> soft orange -> warm amber -> back
-  const float colorT = (sin(colorPhase_) + 1.0F) * 0.5F;
-  
-  // Interpolate between warm ambient colors
-  // Base warm white: (60, 40, 25) -> Soft orange: (80, 45, 20) -> Warm amber: (70, 50, 15)
-  uint8_t r = static_cast<uint8_t>((60 + (20 * sin(colorPhase_))) * brightness);
-  uint8_t g = static_cast<uint8_t>((40 + (10 * cos(colorPhase_))) * brightness);
-  uint8_t b = static_cast<uint8_t>((25 - (10 * sin(colorPhase_ * 0.5))) * brightness);
-  
-  pixels_.fill(pixels_.Color(r, g, b));
-  pixels_.show();
-}
+  const float minBrightness = 0.15F;
+  const uint8_t brightness = static_cast<uint8_t>(255.0F * (minBrightness + ((1.0F - minBrightness) * brightnessWave)));
 
-AmbientEffect::AmbientEffect(Adafruit_NeoPixel& pixels, const StateCache& state)
-    : pixels_(pixels), state_(state) {}
+  // Animate Hue to cycle through warm colors (e.g., orange to yellow)
+  // Hue is a value from 0-65535. Let's sweep a small range.
+  // 2000 (~orange) to 8000 (~yellow)
+  const float hueWave = (sin(colorPhase_) + 1.0F) * 0.5F;
+  const uint16_t hue = 2000 + static_cast<uint16_t>(6000.0F * hueWave);
 
-void AmbientEffect::begin() {
-  phase_ = 0.0F;
-  colorPhase_ = 0.0F;
-  update();
-}
+  // Keep saturation high for rich color
+  const uint8_t saturation = 255;
 
-void AmbientEffect::update() {
-  // Slow brightness breathing
-  phase_ += 0.02F;
-  if (phase_ > TWO_PI) {
-    phase_ -= TWO_PI;
-  }
-  
-  // Very slow color transition through warm ambient tones
-  colorPhase_ += 0.005F;
-  if (colorPhase_ > TWO_PI) {
-    colorPhase_ -= TWO_PI;
-  }
-  
-  const float brightnessWave = (sin(phase_) + 1.0F) * 0.5F;
-  const float floor = 0.15F;
-  const float brightness = floor + ((1.0F - floor) * brightnessWave);
-  
-  // Cycle through warm colors: warm white -> soft orange -> warm amber -> back
-  const float colorT = (sin(colorPhase_) + 1.0F) * 0.5F;
-  
-  // Interpolate between warm ambient colors
-  // Base warm white: (60, 40, 25) -> Soft orange: (80, 45, 20) -> Warm amber: (70, 50, 15)
-  uint8_t r = static_cast<uint8_t>((60 + (20 * sin(colorPhase_))) * brightness);
-  uint8_t g = static_cast<uint8_t>((40 + (10 * cos(colorPhase_))) * brightness);
-  uint8_t b = static_cast<uint8_t>((25 - (10 * sin(colorPhase_ * 0.5))) * brightness);
-  
-  pixels_.fill(pixels_.Color(r, g, b));
-  pixels_.show();
-}
+  // Apply gamma correction for perceptually linear brightness
+  const uint32_t color = pixels_.gamma32(pixels_.ColorHSV(hue, saturation, brightness));
 
-AmbientEffect::AmbientEffect(Adafruit_NeoPixel& pixels, const StateCache& state)
-    : pixels_(pixels), state_(state) {}
-
-void AmbientEffect::begin() {
-  phase_ = 0.0F;
-  colorPhase_ = 0.0F;
-  update();
-}
-
-void AmbientEffect::update() {
-  // Slow brightness breathing
-  phase_ += 0.02F;
-  if (phase_ > TWO_PI) {
-    phase_ -= TWO_PI;
-  }
-  
-  // Very slow color transition through warm ambient tones
-  colorPhase_ += 0.005F;
-  if (colorPhase_ > TWO_PI) {
-    colorPhase_ -= TWO_PI;
-  }
-  
-  const float brightnessWave = (sin(phase_) + 1.0F) * 0.5F;
-  const float floor = 0.15F;
-  const float brightness = floor + ((1.0F - floor) * brightnessWave);
-  
-  // Cycle through warm colors: warm white -> soft orange -> warm amber -> back
-  const float colorT = (sin(colorPhase_) + 1.0F) * 0.5F;
-  
-  // Interpolate between warm ambient colors
-  // Base warm white: (60, 40, 25) -> Soft orange: (80, 45, 20) -> Warm amber: (70, 50, 15)
-  uint8_t r = static_cast<uint8_t>((60 + (20 * sin(colorPhase_))) * brightness);
-  uint8_t g = static_cast<uint8_t>((40 + (10 * cos(colorPhase_))) * brightness);
-  uint8_t b = static_cast<uint8_t>((25 - (10 * sin(colorPhase_ * 0.5))) * brightness);
-  
-  pixels_.fill(pixels_.Color(r, g, b));
+  pixels_.fill(color);
   pixels_.show();
 }
