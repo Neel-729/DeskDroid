@@ -30,4 +30,3 @@ void saveDeviceSettings(const DeviceSettings &settings);
 void loadReminders(ReminderRecord reminders[], uint8_t count);
 void saveReminders(const ReminderRecord reminders[], uint8_t count);
 }
-

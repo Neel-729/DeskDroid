@@ -7,12 +7,19 @@
 namespace TimerFeature {
 void begin();
 
-void start(unsigned long now);
-void pause(unsigned long now);
-void reset();
-void checkDone(unsigned long now);
+void enterEditing();
+void exitEditing();
+void enterRunning(unsigned long now);
+void enterPaused(unsigned long now);
+void enterComplete(unsigned long now);
+void confirmReset();
+void update(unsigned long now);
 
 bool isRunning();
+bool isPaused();
+bool isEditing();
+bool isComplete();
+
 unsigned long remainingMillis(unsigned long now);
 unsigned long totalMillis();
 
@@ -24,8 +31,6 @@ void adjustEdit(int step);
 void advanceEditField();
 TimerEditField editField();
 
-void startAlarm(unsigned long now);
-void stopAlarm(bool restoreDuration);
 bool shouldAlarmBeep(unsigned long now);
 bool alarmTimedOut(unsigned long now);
 }

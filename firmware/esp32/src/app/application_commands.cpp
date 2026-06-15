@@ -101,25 +101,25 @@ bool setRelay(uint8_t relayNumber, bool enabled){
 }
 
 bool startTimer(uint32_t nowMs){
-  SystemStateStore::startTimer(nowMs);
+  SystemStateStore::enterTimerRunning(nowMs);
   enqueueTimerEvent(EVENT_TIMER_STARTED);
   return true;
 }
 
 bool pauseTimer(uint32_t nowMs){
-  SystemStateStore::pauseTimer(nowMs);
+  SystemStateStore::enterTimerPaused(nowMs);
   enqueueTimerEvent(EVENT_TIMER_STOPPED);
   return true;
 }
 
 bool stopTimer(){
-  SystemStateStore::resetTimer();
+  SystemStateStore::confirmTimerReset();
   enqueueTimerEvent(EVENT_TIMER_STOPPED);
   return true;
 }
 
 bool resetTimer(){
-  SystemStateStore::resetTimer();
+  SystemStateStore::confirmTimerReset();
   return true;
 }
 

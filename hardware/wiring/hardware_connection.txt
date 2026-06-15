@@ -1,0 +1,26 @@
+ESP32
+
+| GPIO | Function          |
+| ---- | ----------------- |
+| 4    | Buzzer            |
+| 5    | Encoder SW        |
+| 16   | UART RX (ESP8266) |
+| 17   | UART TX (ESP8266) |
+| 18   | Encoder DT        |
+| 19   | Encoder CLK       |
+| 21   | LCD + RTC SDA     |
+| 22   | LCD + RTC SCL     |
+| 23   | TTP229 SCL        |
+| 36   | TTP229 SDO        |
+
+
+ESP8266
+
+| GPIO | Function          |
+| ---- | ----------------- |
+| D4   | NeoPixel          |
+| D1   | Relay 1           |
+| D2   | Relay 2           |
+| D5   | Relay 3           |
+| D6   | Relay 4           |
+

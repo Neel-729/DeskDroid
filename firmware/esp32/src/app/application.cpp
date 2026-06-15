@@ -271,13 +271,13 @@ void updateReminderAlarm(unsigned long now){
 
 void resetTimerAlarm(bool restoreDuration){
   AppCommands::setLedMode(LED_IDLE);
-  TimerFeature::stopAlarm(restoreDuration);
+  TimerFeature::confirmReset();
   AppNavigation::enter(STATE_TIMER_VIEW);
 }
 
 void checkTimerDone(unsigned long now){
   if(AppNavigation::current()==STATE_TIMER_ALARM) return;
-  TimerFeature::checkDone(now);
+  TimerFeature::update(now);
 }
 
 void handleEvent(const AppEvent &event, unsigned long now){
@@ -371,10 +371,13 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_TIMER_VIEW:
-        if(TimerFeature::isRunning()){
-          AppCommands::pauseTimer(now);
-        } else {
-          AppCommands::startTimer(now);
+        {
+          const auto& timer = SystemStateStore::current().timer;
+          if (timer.state == TimerStateValue::RUNNING) {
+            TimerFeature::enterPaused(now);
+          } else {
+            TimerFeature::enterRunning(now);
+          }
         }
         break;
 
@@ -388,7 +391,16 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_STOPWATCH:
-        StopwatchFeature::toggle(now);
+        {
+          const auto& stopwatch = SystemStateStore::current().stopwatch;
+          if (stopwatch.state == StopwatchStateValue::RUNNING) {
+            StopwatchFeature::stop(now);
+          } else if (stopwatch.state == StopwatchStateValue::PAUSED) {
+            StopwatchFeature::resume(now);
+          } else {
+            StopwatchFeature::start(now);
+          }
+        }
         break;
 
       case STATE_REMINDER_HOME:
@@ -448,15 +460,17 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_TIMER_VIEW:
+        if (!TimerFeature::isRunning()) {
+          TimerFeature::enterEditing();
+        }
+        break;
+
       case STATE_TIMER_EDIT:
-      case STATE_TIMER_ALARM:
-        AppCommands::resetTimer();
-        resetTimerAlarm(false);
+        AppNavigation::enter(STATE_TIMER_VIEW);
         break;
 
       case STATE_STOPWATCH:
-        StopwatchFeature::reset();
-        AudioService::beep(120);
+        AppNavigation::goHome();
         break;
 
       default:
@@ -473,11 +487,12 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_TIMER_VIEW:
-        if(!TimerFeature::isRunning()) AppNavigation::enter(STATE_TIMER_EDIT);
+        TimerFeature::confirmReset();
         break;
 
-      case STATE_TIMER_EDIT:
-        AppNavigation::enter(STATE_TIMER_VIEW);
+      case STATE_STOPWATCH:
+        StopwatchFeature::reset();
+        AudioService::beep(120);
         break;
 
       case STATE_TIMER_ALARM:

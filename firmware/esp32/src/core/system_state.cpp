@@ -257,7 +257,7 @@ void setTimerDuration(uint32_t durationMs){
   if(state.timer.durationMs == durationMs && state.timer.remainingMs == durationMs) return;
 
   state.timer.durationMs = durationMs;
-  if(!state.timer.active){
+  if(state.timer.state != TimerStateValue::RUNNING && state.timer.state != TimerStateValue::PAUSED){
     state.timer.remainingMs = durationMs;
   }
   markChanged(StateChange::Timer);
@@ -280,7 +280,7 @@ void setTimerClockFields(uint8_t hours, uint8_t minutes, uint8_t seconds){
   state.timer.minutes = minutes;
   state.timer.seconds = seconds;
   state.timer.durationMs = duration;
-  if(!state.timer.active){
+  if(state.timer.state != TimerStateValue::RUNNING && state.timer.state != TimerStateValue::PAUSED){
     state.timer.remainingMs = duration;
   }
   markChanged(StateChange::Timer);
@@ -292,64 +292,102 @@ void setTimerEditField(TimerEditField field){
   markChanged(StateChange::Timer);
 }
 
-void startTimer(uint32_t nowMs){
+void enterTimerEditing(){
+  if(state.timer.state == TimerStateValue::EDITING) return;
+  state.timer.state = TimerStateValue::EDITING;
+  markChanged(StateChange::Timer);
+}
+
+void exitTimerEditing(){
+  if(state.timer.state != TimerStateValue::EDITING) return;
+  state.timer.state = TimerStateValue::IDLE;
+  markChanged(StateChange::Timer);
+}
+
+void enterTimerRunning(uint32_t nowMs){
+  if(state.timer.state == TimerStateValue::RUNNING) return;
+
   if(state.timer.remainingMs == 0) state.timer.remainingMs = state.timer.durationMs;
-  state.timer.active = true;
-  state.timer.alarmActive = false;
+  state.timer.state = TimerStateValue::RUNNING;
   state.timer.startedAtMs = nowMs;
   state.timer.endsAtMs = nowMs + state.timer.remainingMs;
   markChanged(StateChange::Timer);
 }
 
-void pauseTimer(uint32_t nowMs){
-  if(state.timer.active){
+void enterTimerPaused(uint32_t nowMs){
+  if(state.timer.state == TimerStateValue::PAUSED) return;
+
+  if(state.timer.state == TimerStateValue::RUNNING){
     state.timer.remainingMs = nowMs >= state.timer.endsAtMs ? 0 : state.timer.endsAtMs - nowMs;
   }
-  if(!state.timer.active && !state.timer.alarmActive) return;
-  state.timer.active = false;
-  state.timer.alarmActive = false;
+  state.timer.state = TimerStateValue::PAUSED;
   markChanged(StateChange::Timer);
 }
 
-void resetTimer(){
-  state.timer.active = false;
-  state.timer.alarmActive = false;
-  state.timer.remainingMs = state.timer.durationMs;
-  markChanged(StateChange::Timer);
-}
+void enterTimerComplete(uint32_t nowMs){
+  if(state.timer.state == TimerStateValue::COMPLETE) return;
 
-void completeTimer(uint32_t nowMs){
-  state.timer.active = false;
+  state.timer.state = TimerStateValue::COMPLETE;
   state.timer.remainingMs = 0;
   state.timer.endsAtMs = nowMs;
-  markChanged(StateChange::Timer);
-}
-
-void startTimerAlarm(uint32_t nowMs){
-  state.timer.alarmActive = true;
   state.timer.alarmStartedAtMs = nowMs;
   state.timer.lastAlarmBeepMs = 0;
   markChanged(StateChange::Timer);
 }
 
-void stopTimerAlarm(bool restoreDuration){
-  state.timer.alarmActive = false;
-  if(restoreDuration){
-    state.timer.remainingMs = state.timer.durationMs;
-  }
+void requestTimerReset(){
+  // This function is a placeholder for the reset confirmation flow.
+  // The actual implementation will be in the application logic.
+}
+
+void confirmTimerReset(){
+  state.timer.state = TimerStateValue::IDLE;
+  state.timer.remainingMs = state.timer.durationMs;
   markChanged(StateChange::Timer);
 }
 
-void updateTimerRemaining(uint32_t nowMs){
-  if(!state.timer.active) return;
+void cancelTimerReset(){
+  // This function is a placeholder for the reset confirmation flow.
+  // The actual implementation will be in the application logic.
+}
+
+void updateTimer(uint32_t nowMs){
+  if(state.timer.state != TimerStateValue::RUNNING) return;
   const uint32_t remaining = nowMs >= state.timer.endsAtMs ? 0 : state.timer.endsAtMs - nowMs;
   if(state.timer.remainingMs == remaining) return;
   state.timer.remainingMs = remaining;
   markChanged(StateChange::Timer);
 }
 
-void markTimerAlarmBeep(uint32_t nowMs){
-  state.timer.lastAlarmBeepMs = nowMs;
+void enterStopwatchRunning(uint32_t nowMs) {
+  if(state.stopwatch.state == StopwatchStateValue::RUNNING) return;
+
+  state.stopwatch.state = StopwatchStateValue::RUNNING;
+  state.stopwatch.startTime = nowMs - state.stopwatch.elapsed;
+  markChanged(StateChange::Timer);
+}
+
+void enterStopwatchPaused(uint32_t nowMs) {
+  if(state.stopwatch.state == StopwatchStateValue::PAUSED) return;
+
+  if(state.stopwatch.state == StopwatchStateValue::RUNNING){
+    state.stopwatch.elapsed = nowMs - state.stopwatch.startTime;
+  }
+  state.stopwatch.state = StopwatchStateValue::PAUSED;
+  markChanged(StateChange::Timer);
+}
+
+void resetStopwatch() {
+  state.stopwatch.state = StopwatchStateValue::IDLE;
+  state.stopwatch.elapsed = 0;
+  markChanged(StateChange::Timer);
+}
+
+void updateStopwatch(uint32_t nowMs) {
+  if (state.stopwatch.state == StopwatchStateValue::RUNNING) {
+    state.stopwatch.elapsed = nowMs - state.stopwatch.startTime;
+    markChanged(StateChange::Timer);
+  }
 }
 
 void setWifiConnected(bool connected, int32_t rssi){

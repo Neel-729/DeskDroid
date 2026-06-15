@@ -1,34 +1,35 @@
 #include "stopwatch.h"
 
-namespace {
-unsigned long stopwatchStartTime=0;
-unsigned long stopwatchElapsed=0;
-bool stopwatchRunning=false;
-}
+#include "../core/system_state.h"
 
 namespace StopwatchFeature {
 
-void toggle(unsigned long now){
-  stopwatchRunning=!stopwatchRunning;
-  if(stopwatchRunning) stopwatchStartTime=now-stopwatchElapsed;
+void start(unsigned long now){
+  SystemStateStore::enterStopwatchRunning(now);
+}
+
+void stop(unsigned long now){
+  SystemStateStore::enterStopwatchPaused(now);
+}
+
+void resume(unsigned long now){
+  SystemStateStore::enterStopwatchRunning(now);
 }
 
 void reset(){
-  stopwatchRunning=false;
-  stopwatchElapsed=0;
+  SystemStateStore::resetStopwatch();
 }
 
 void update(unsigned long now){
-  if(stopwatchRunning) stopwatchElapsed = (unsigned long)(now - stopwatchStartTime);
+  SystemStateStore::updateStopwatch(now);
 }
 
 bool isRunning(){
-  return stopwatchRunning;
+  return SystemStateStore::current().stopwatch.state == StopwatchStateValue::RUNNING;
 }
 
 unsigned long elapsed(){
-  return stopwatchElapsed;
+  return SystemStateStore::current().stopwatch.elapsed;
 }
 
 }
-

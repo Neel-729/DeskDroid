@@ -51,9 +51,22 @@ struct LightingState {
   LedIdlePreset idlePreset = IDLE_STATIC;
 };
 
+enum class TimerStateValue : uint8_t {
+  IDLE,
+  EDITING,
+  RUNNING,
+  PAUSED,
+  COMPLETE
+};
+
+enum class StopwatchStateValue : uint8_t {
+  IDLE,
+  RUNNING,
+  PAUSED
+};
+
 struct TimerState {
-  bool active = false;
-  bool alarmActive = false;
+  TimerStateValue state = TimerStateValue::IDLE;
   uint32_t durationMs = 5UL * 60UL * 1000UL;
   uint32_t remainingMs = 5UL * 60UL * 1000UL;
   uint32_t startedAtMs = 0;
@@ -64,6 +77,12 @@ struct TimerState {
   TimerEditField editField = EDIT_MINUTES;
   uint32_t alarmStartedAtMs = 0;
   uint32_t lastAlarmBeepMs = 0;
+};
+
+struct StopwatchState {
+  StopwatchStateValue state = StopwatchStateValue::IDLE;
+  uint32_t startTime = 0;
+  uint32_t elapsed = 0;
 };
 
 struct ConnectivityState {
@@ -96,6 +115,7 @@ struct SystemState {
   bool relayStates[RelayCount] = {};
   LightingState lighting;
   TimerState timer;
+  StopwatchState stopwatch;
   ConnectivityState connectivity;
   AudioState audio;
   SettingsState settings;
@@ -125,14 +145,20 @@ void markSettingsDirty(bool dirty);
 void setTimerDuration(uint32_t durationMs);
 void setTimerClockFields(uint8_t hours, uint8_t minutes, uint8_t seconds);
 void setTimerEditField(TimerEditField field);
-void startTimer(uint32_t nowMs);
-void pauseTimer(uint32_t nowMs);
-void resetTimer();
-void completeTimer(uint32_t nowMs);
-void startTimerAlarm(uint32_t nowMs);
-void stopTimerAlarm(bool restoreDuration);
-void updateTimerRemaining(uint32_t nowMs);
-void markTimerAlarmBeep(uint32_t nowMs);
+void enterTimerEditing();
+void exitTimerEditing();
+void enterTimerRunning(uint32_t nowMs);
+void enterTimerPaused(uint32_t nowMs);
+void enterTimerComplete(uint32_t nowMs);
+void requestTimerReset();
+void confirmTimerReset();
+void cancelTimerReset();
+void updateTimer(uint32_t nowMs);
+
+void enterStopwatchRunning(uint32_t nowMs);
+void enterStopwatchPaused(uint32_t nowMs);
+void resetStopwatch();
+void updateStopwatch(uint32_t nowMs);
 
 void setWifiConnected(bool connected, int32_t rssi = 0);
 void setEsp8266Connected(bool connected);

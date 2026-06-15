@@ -7,12 +7,12 @@
 namespace TimerService {
 
 void update(uint32_t nowMs){
-  TimerFeature::checkDone(nowMs);
+  TimerFeature::update(nowMs);
 }
 
 void handleEvent(const AppEvent &event, uint32_t nowMs){
   if(event.type == EVENT_TIMER_DONE){
-    SystemStateStore::startTimerAlarm(nowMs);
+    SystemStateStore::enterTimerComplete(nowMs);
   }
 }
 

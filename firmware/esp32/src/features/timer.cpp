@@ -20,38 +20,60 @@ void begin(){
   SystemStateStore::setTimerClockFields(timer.hours, timer.minutes, timer.seconds);
 }
 
-void start(unsigned long now){
-  SystemStateStore::startTimer(now);
+void enterEditing(){
+  SystemStateStore::enterTimerEditing();
 }
 
-void pause(unsigned long now){
-  SystemStateStore::pauseTimer(now);
+void exitEditing(){
+  SystemStateStore::exitTimerEditing();
 }
 
-void reset(){
-  SystemStateStore::resetTimer();
+void enterRunning(unsigned long now){
+  SystemStateStore::enterTimerRunning(now);
 }
 
-void checkDone(unsigned long now){
+void enterPaused(unsigned long now){
+  SystemStateStore::enterTimerPaused(now);
+}
+
+void enterComplete(unsigned long now){
+  SystemStateStore::enterTimerComplete(now);
+}
+
+void confirmReset(){
+  SystemStateStore::confirmTimerReset();
+}
+
+void update(unsigned long now){
   const TimerState &timer = SystemStateStore::current().timer;
-  if(!timer.active) return;
-  if(now < timer.endsAtMs) {
-    SystemStateStore::updateTimerRemaining(now);
-    return;
-  }
+  if(timer.state != TimerStateValue::RUNNING) return;
 
-  if(enqueueTimerEvent(EVENT_TIMER_DONE)){
-    SystemStateStore::completeTimer(now);
+  if(now >= timer.endsAtMs){
+    enqueueTimerEvent(EVENT_TIMER_DONE);
+  } else {
+    SystemStateStore::updateTimer(now);
   }
 }
 
 bool isRunning(){
-  return SystemStateStore::current().timer.active;
+  return SystemStateStore::current().timer.state == TimerStateValue::RUNNING;
+}
+
+bool isPaused(){
+  return SystemStateStore::current().timer.state == TimerStateValue::PAUSED;
+}
+
+bool isEditing(){
+  return SystemStateStore::current().timer.state == TimerStateValue::EDITING;
+}
+
+bool isComplete(){
+  return SystemStateStore::current().timer.state == TimerStateValue::COMPLETE;
 }
 
 unsigned long remainingMillis(unsigned long now){
   const TimerState &timer = SystemStateStore::current().timer;
-  if(timer.active){
+  if(timer.state == TimerStateValue::RUNNING){
     return now >= timer.endsAtMs ? 0 : timer.endsAtMs - now;
   }
   return timer.remainingMs;
@@ -101,18 +123,11 @@ TimerEditField editField(){
   return SystemStateStore::current().timer.editField;
 }
 
-void startAlarm(unsigned long now){
-  SystemStateStore::startTimerAlarm(now);
-}
-
-void stopAlarm(bool restoreDuration){
-  SystemStateStore::stopTimerAlarm(restoreDuration);
-}
-
 bool shouldAlarmBeep(unsigned long now){
   const TimerState &timer = SystemStateStore::current().timer;
   if(now - timer.lastAlarmBeepMs <= 1200) return false;
-  SystemStateStore::markTimerAlarmBeep(now);
+  // This is a read-only function, so we can't update the state here.
+  // The state will be updated in the application layer.
   return true;
 }
 
