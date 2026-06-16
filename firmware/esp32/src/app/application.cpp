@@ -34,15 +34,7 @@
 
 namespace {
 
-constexpr const char* FIRMWARE_VERSION = "2.6.5";
-constexpr uint8_t ENCODER_BUTTON_PIN = 5;
-constexpr unsigned long LONG_PRESS_HOME_DURATION = 1000;   // 1000ms threshold
-constexpr unsigned long VISUAL_FEEDBACK_THRESHOLD = 500;   // Show feedback at 500ms
-
-// Long press home detection state
-bool buttonPressedPrevious = false;
-unsigned long buttonPressStartMs = 0;
-bool longPressHomePending = false;
+constexpr const char* FIRMWARE_VERSION = "2.6.6";
 
 SystemContext systemContext;
 
@@ -316,6 +308,14 @@ void handleEvent(const AppEvent &event, unsigned long now){
     if(ev==EVENT_CLICK || ev==EVENT_DOUBLE_CLICK || ev==EVENT_LONG_PRESS){
       stopReminderAlarm();
     }
+    return;
+  }
+
+  // Handle long press to go home
+  if(ev == EVENT_LONG_PRESS){
+    LOG_INFO(LogTag::APP, "[NAV] Long press home triggered");
+    AppNavigation::goHome();
+    AudioService::beep(200);  // Distinct beep for long press home
     return;
   }
 
@@ -646,48 +646,7 @@ void runReminderAlarmTask(FrameContext &context){
 }
 
 void runNavMonitorTask(FrameContext &context){
-  monitorLongPressHome(context.nowMs);
-}
-
-void monitorLongPressHome(unsigned long now){
-  // Read current button state (pressed = LOW on input pullup)
-  bool buttonPressed = (digitalRead(ENCODER_BUTTON_PIN) == LOW);
-  
-  // Button press started
-  if(buttonPressed && !buttonPressedPrevious){
-    buttonPressStartMs = now;
-    longPressHomePending = false;
-    LOG_INFO(LogTag::APP, "[NAV] Button pressed, monitoring for long press home");
-  }
-  
-  // Button is being held
-  if(buttonPressed && buttonPressedPrevious){
-    unsigned long pressedDurationMs = now - buttonPressStartMs;
-    
-    // Show visual feedback at threshold (but don't trigger yet)
-    if(!longPressHomePending && pressedDurationMs >= VISUAL_FEEDBACK_THRESHOLD){
-      LOG_INFO(LogTag::APP, "[NAV] Visual feedback threshold reached (%ldms)", pressedDurationMs);
-      // Could set a flag here to show "Returning Home..." on screen
-    }
-    
-    // Trigger long press home at threshold
-    if(pressedDurationMs >= LONG_PRESS_HOME_DURATION && !longPressHomePending){
-      longPressHomePending = true;
-      LOG_INFO(LogTag::APP, "[NAV] Long press home triggered (%ldms)", pressedDurationMs);
-      AppNavigation::goHome();
-      AudioService::beep(200);  // Distinct beep for long press home
-    }
-  }
-  
-  // Button released
-  if(!buttonPressed && buttonPressedPrevious){
-    if(longPressHomePending){
-      LOG_INFO(LogTag::APP, "[NAV] Long press home completed");
-    }
-    longPressHomePending = false;
-  }
-  
-  buttonPressedPrevious = buttonPressed;
+  // Navigation monitoring removed - button handling now centralized in EncoderDriver
 }
 
 void runInputTask(FrameContext &context){
