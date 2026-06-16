@@ -276,6 +276,11 @@ void handleEvent(const AppEvent &event, unsigned long now){
   EventType ev = event.type;
   DeviceSettings &settings = SettingsFlow::settings();
 
+  // STAGE 5: Log application receiving the event
+  if(ev == EVENT_CLICK || ev == EVENT_DOUBLE_CLICK || ev == EVENT_LONG_PRESS){
+    Serial.printf("[APP] event=%d\n", ev);
+  }
+
   // Track user activity for idle manager
   if(ev == EVENT_CLICK || ev == EVENT_DOUBLE_CLICK || ev == EVENT_LONG_PRESS ||
      ev == EVENT_ROTATE_CW || ev == EVENT_ROTATE_CCW){
@@ -669,6 +674,7 @@ void runEventTask(FrameContext &context){
   if(IdleManager::update(context.nowMs)){
     // Idle timeout reached - return to home
     if(!AppNavigation::isAtHome()){
+      Serial.println("[HOME RESET] Auto-return to dashboard triggered");
       LOG_INFO(LogTag::APP, "[IDLE] Auto-return to dashboard triggered");
       AppNavigation::goHome();
       AudioService::beep(150);  // Short beep for auto-return

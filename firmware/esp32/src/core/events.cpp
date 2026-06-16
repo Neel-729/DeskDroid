@@ -53,6 +53,12 @@ bool enqueueEvent(EventType type, EventSource source){
 }
 
 bool enqueueEncoderEvent(EventType type, int8_t direction){
+  // Only log button events (not rotation events)
+  if(type == EVENT_CLICK || type == EVENT_DOUBLE_CLICK || type == EVENT_LONG_PRESS){
+    // STAGE 3: Log event being pushed to queue
+    Serial.printf("[QUEUE PUSH] event=%d count=%d\n", type, queueDepth());
+  }
+  
   if (eventQueueHead != eventQueueTail) {
     uint8_t prevHead = (eventQueueHead == 0) ? (EVENT_QUEUE_SIZE - 1) : (eventQueueHead - 1);
     if (eventQueue[prevHead].type == type && eventQueue[prevHead].source == EventSource::INPUTS) {
@@ -98,6 +104,11 @@ bool dequeueEvent(AppEvent &event){
   event = eventQueue[eventQueueTail];
   eventQueueTail = (eventQueueTail + 1) % EVENT_QUEUE_SIZE;
   stats.dequeued++;
+  
+  // STAGE 4: Log event being popped from queue
+  if(event.type == EVENT_CLICK || event.type == EVENT_DOUBLE_CLICK || event.type == EVENT_LONG_PRESS){
+    Serial.printf("[QUEUE POP] event=%d\n", event.type);
+  }
   return true;
 }
 

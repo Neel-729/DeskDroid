@@ -9,41 +9,111 @@ constexpr uint8_t ENCODER_SW  = 5;
 
 constexpr uint16_t BUTTON_DEBOUNCE = 25;      // Reduced debounce for faster response
 constexpr uint16_t LONG_PRESS_HOME = 1000;   // 1000ms for home long press (matches original requirement)
-constexpr uint16_t DOUBLE_CLICK_WINDOW = 300; // Max time between clicks for double-click
+constexpr uint16_t DOUBLE_CLICK_ARBITRATION = 180; // 180ms arbitration window for double-click (user-friendly range)
+constexpr uint16_t DOUBLE_CLICK_MAX_GAP = 350;     // Max time between first and second click release
 
-// Button state tracking
+// Button state tracking - all gesture state variables in one place for full auditability
+enum class ButtonGestureState {
+  IDLE,                // Ready for new input
+  BUTTON_PRESSED,      // Button pressed but not released yet
+  WAITING_SECOND_CLICK, // First click released, waiting for potential second click
+  CONSUMED_UNTIL_RELEASE // Double-click consumed, block processing until button release
+};
+ButtonGestureState gestureState = ButtonGestureState::IDLE;
+
+// State variables - all reset to baseline in resetGestureState()
 bool buttonDown = false;
 unsigned long buttonDownTime = 0;
-bool pendingSingleClick = false;
-unsigned long singleClickTime = 0;
+unsigned long firstClickReleaseTime = 0;
 
-// Raw and debounced state tracking
-bool lastRawButtonState = false;
-bool debouncedButtonState = false;
-unsigned long lastButtonChangeTime = 0;
+// Debounce state tracking (static, never modified outside debounce logic)
+static bool lastRawButtonState = false;
+static bool debouncedButtonState = false;
+static unsigned long lastButtonChangeTime = 0;
+
+// Single point of reset for ALL gesture state - prevents stale state leakage
+void resetGestureState() {
+  gestureState = ButtonGestureState::IDLE;
+  buttonDown = false;
+  buttonDownTime = 0;
+  firstClickReleaseTime = 0;
+}
+
+// Always ensure we return to IDLE after any gesture emission (only for single/long press)
+EventType emitGestureEvent(EventType event) {
+  // STAGE 1: Log event generation from encoder driver
+  Serial.printf("[EVENT] %d\n", event);
+  resetGestureState();
+  return event;
+}
+
+// ISR-safe atomic state for edge capture - only raw GPIO transitions
+volatile uint8_t lastEncoderState = 0;       // Last captured CLK/DT state (bits 1=CLK, 0=DT)
+volatile int8_t encoderStepAccum = 0;       // Atomic step accumulator, only modified in ISR
+volatile unsigned long lastButtonEdgeTime = 0; // Timestamp of last button edge (us)
+volatile bool lastButtonRawState = false;     // Last raw button state captured in ISR
+
+// IRAM-safe ISR for GPIO edge capture (only minimal operations, compliant with ESP32 best practices)
+void IRAM_ATTR encoderISR() {
+  // Use safe digitalRead() inside ISR for initial validation (per requirements)
+  bool clk = digitalRead(ENCODER_CLK);
+  bool dt = digitalRead(ENCODER_DT);
+  bool sw = digitalRead(ENCODER_SW);
+
+  // Process encoder quadrature
+  uint8_t newState = (clk << 1) | dt;
+  if(newState != lastEncoderState) {
+    // Quadrature transition detection - same logic as original polling implementation
+    uint8_t combined = (lastEncoderState << 2) | newState;
+    if(combined == 0b1101 || combined == 0b0100 || combined == 0b0010 || combined == 0b1011) {
+      encoderStepAccum++;
+    } else if(combined == 0b1110 || combined == 0b0111 || combined == 0b0001 || combined == 0b1000) {
+      encoderStepAccum--;
+    }
+    lastEncoderState = newState;
+  }
+
+  // Process button edge capture only - timestamp changes, no debounce
+  if(sw != lastButtonRawState) {
+    lastButtonRawState = sw;
+    lastButtonEdgeTime = micros(); // Only capture timestamp of raw edge
+  }
+}
 
 bool switchPressed(){
   return digitalRead(ENCODER_SW)==LOW;
 }
 
 int8_t readEncoder(){
-  static uint8_t prevState=0;
-  static int8_t stepAccum=0;
+  // Original polling fallback (will be removed after interrupt validation, but safe to keep)
+  static uint8_t pollPrevState=0;
+  static int8_t pollStepAccum=0;
 
-  prevState<<=2;
+  pollPrevState<<=2;
+  if(digitalRead(ENCODER_CLK)) pollPrevState|=0x02;
+  if(digitalRead(ENCODER_DT))  pollPrevState|=0x01;
+  pollPrevState&=0x0F;
 
-  if(digitalRead(ENCODER_CLK)) prevState|=0x02;
-  if(digitalRead(ENCODER_DT))  prevState|=0x01;
+  if(pollPrevState==0b1101||pollPrevState==0b0100||pollPrevState==0b0010||pollPrevState==0b1011) pollStepAccum++;
+  if(pollPrevState==0b1110||pollPrevState==0b0111||pollPrevState==0b0001||pollPrevState==0b1000) pollStepAccum--;
 
-  prevState&=0x0F;
+  // Also consume ISR accumulated steps in critical section
+  int8_t totalSteps = 0;
+  noInterrupts();
+  if(encoderStepAccum >= 2) {
+    totalSteps += 1;
+    encoderStepAccum = 0;
+  } else if(encoderStepAccum <= -2) {
+    totalSteps += -1;
+    encoderStepAccum = 0;
+  }
+  interrupts();
 
-  if(prevState==0b1101||prevState==0b0100||prevState==0b0010||prevState==0b1011) stepAccum++;
-  if(prevState==0b1110||prevState==0b0111||prevState==0b0001||prevState==0b1000) stepAccum--;
+  // Process polling accumulated steps
+  if(pollStepAccum>=2){ pollStepAccum=0; totalSteps +=1; }
+  if(pollStepAccum<=-2){ pollStepAccum=0; totalSteps +=-1; }
 
-  if(stepAccum>=2){ stepAccum=0; return 1; }
-  if(stepAccum<=-2){ stepAccum=0; return -1; }
-
-  return 0;
+  return totalSteps;
 }
 
 EventType readButtonEvent(){
@@ -63,40 +133,70 @@ EventType readButtonEvent(){
     pressed = debouncedButtonState;
   }
 
-  // Button just pressed
-  if(pressed && !buttonDown){
-    buttonDown = true;
-    buttonDownTime = now;
-    
-    // If we get a new press while a single click is pending, it's a double click!
-    if(pendingSingleClick){
-      pendingSingleClick = false;
+  // Log FSM state for validation (temporary, per requirements)
+  Serial.printf("[FSM] state=%d pressed=%d buttonDown=%d\n", (int)gestureState, pressed, buttonDown);
+
+  // Handle CONSUMED_UNTIL_RELEASE state - block all processing until button is released
+  if(gestureState == ButtonGestureState::CONSUMED_UNTIL_RELEASE){
+    if(!pressed){
+      // Button released, reset to IDLE and resume normal operation
+      resetGestureState();
+    }
+    return EVENT_NONE;
+  }
+
+  // Handle IDLE state - only process new button press
+  if(gestureState == ButtonGestureState::IDLE){
+    if(pressed && !buttonDown){
+      // First button press - transition to pressed state
+      buttonDown = true;
+      buttonDownTime = now;
+      gestureState = ButtonGestureState::BUTTON_PRESSED;
+    }
+    return EVENT_NONE;
+  }
+
+  // Handle BUTTON_PRESSED state - process release or long press
+  if(gestureState == ButtonGestureState::BUTTON_PRESSED){
+    if(pressed){
+      // Still pressed - check for long press
+      unsigned long pressDuration = now - buttonDownTime;
+      if(pressDuration >= LONG_PRESS_HOME){
+        return emitGestureEvent(EVENT_LONG_PRESS);
+      }
+      return EVENT_NONE;
+    } else {
+      // Button released - transition to wait for second click
+      buttonDown = false;
+      firstClickReleaseTime = now;
+      gestureState = ButtonGestureState::WAITING_SECOND_CLICK;
+      return EVENT_NONE;
+    }
+  }
+
+  // Handle WAITING_SECOND_CLICK state - check for second click or timeout
+  if(gestureState == ButtonGestureState::WAITING_SECOND_CLICK){
+    // Check for second button press FIRST (per original order)
+    if(pressed && !buttonDown){
+      // Second click detected - emit double click immediately, transition to CONSUMED_UNTIL_RELEASE
+      buttonDown = true;
+      buttonDownTime = now;
+      Serial.printf("[EVENT] %d\n", EVENT_DOUBLE_CLICK);
+      gestureState = ButtonGestureState::CONSUMED_UNTIL_RELEASE;
       return EVENT_DOUBLE_CLICK;
     }
-  }
-
-  // Button released
-  if(!pressed && buttonDown){
-    unsigned long pressDuration = now - buttonDownTime;
-    buttonDown = false;
     
-    // Check for long press home
-    if(pressDuration >= LONG_PRESS_HOME){
-      return EVENT_LONG_PRESS;
+    // Check if arbitration window expired - emit single click
+    if(now - firstClickReleaseTime > DOUBLE_CLICK_ARBITRATION){
+      return emitGestureEvent(EVENT_CLICK);
     }
     
-    // Normal click - start waiting for double click
-    pendingSingleClick = true;
-    singleClickTime = now;
-    // Emit click immediately for instant feedback!
-    return EVENT_CLICK;
+    // Still waiting - no event yet
+    return EVENT_NONE;
   }
 
-  // Check if pending single click has expired (no double click came)
-  if(pendingSingleClick && (now - singleClickTime) > DOUBLE_CLICK_WINDOW){
-    pendingSingleClick = false;
-  }
-
+  // Safety fallback - should never reach here, but reset if we do
+  resetGestureState();
   return EVENT_NONE;
 }
 }
@@ -108,12 +208,23 @@ void begin(){
   pinMode(ENCODER_DT,INPUT_PULLUP);
   pinMode(ENCODER_SW,INPUT_PULLUP);
 
+  // Initialize ISR state first
+  lastEncoderState = (digitalRead(ENCODER_CLK) << 1) | digitalRead(ENCODER_DT);
+  lastButtonRawState = digitalRead(ENCODER_SW);
+  lastButtonEdgeTime = micros();
+  
+  // Initialize debounce variables
   lastRawButtonState=switchPressed();
   debouncedButtonState=lastRawButtonState;
   lastButtonChangeTime=millis();
-  buttonDown=debouncedButtonState;
-  buttonDownTime=buttonDown ? lastButtonChangeTime : 0;
-  singlePressWaiting=false;
+  
+  // Reset all gesture state to ensure clean startup
+  resetGestureState();
+
+  // Attach interrupts for both encoder pins to capture all edges (FALLING + RISING)
+  attachInterrupt(ENCODER_CLK, encoderISR, CHANGE);
+  attachInterrupt(ENCODER_DT, encoderISR, CHANGE);
+  attachInterrupt(ENCODER_SW, encoderISR, CHANGE);
 }
 
 EventType readEvent(){
