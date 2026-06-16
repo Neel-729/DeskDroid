@@ -52,13 +52,7 @@ bool enqueueEvent(EventType type, EventSource source){
   return enqueueEvent(event);
 }
 
-bool enqueueEncoderEvent(EventType type, int8_t direction){
-  // Only log button events (not rotation events)
-  if(type == EVENT_CLICK || type == EVENT_DOUBLE_CLICK || type == EVENT_LONG_PRESS){
-    // STAGE 3: Log event being pushed to queue
-    Serial.printf("[QUEUE PUSH] event=%d count=%d\n", type, queueDepth());
-  }
-  
+bool enqueueEncoderEvent(EventType type, int8_t direction){  
   if (eventQueueHead != eventQueueTail) {
     uint8_t prevHead = (eventQueueHead == 0) ? (EVENT_QUEUE_SIZE - 1) : (eventQueueHead - 1);
     if (eventQueue[prevHead].type == type && eventQueue[prevHead].source == EventSource::INPUTS) {

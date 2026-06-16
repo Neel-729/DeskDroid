@@ -1,5 +1,15 @@
 #include "encoder_driver.h"
 
+// Compile-time debug toggle for input FSM logging (disabled by default for production)
+#ifndef INPUT_DEBUG
+#define INPUT_DEBUG 0
+#endif
+#if INPUT_DEBUG
+#define INPUT_LOG(...) Serial.printf(__VA_ARGS__)
+#else
+#define INPUT_LOG(...)
+#endif
+
 #include <Arduino.h>
 
 namespace {
@@ -41,8 +51,8 @@ void resetGestureState() {
 
 // Always ensure we return to IDLE after any gesture emission (only for single/long press)
 EventType emitGestureEvent(EventType event) {
-  // STAGE 1: Log event generation from encoder driver
-  Serial.printf("[EVENT] %d\n", event);
+  // STAGE 1: Log event generation from encoder driver (only when INPUT_DEBUG is enabled)
+  INPUT_LOG("[EVENT] %d\n", event);
   resetGestureState();
   return event;
 }
@@ -133,14 +143,15 @@ EventType readButtonEvent(){
     pressed = debouncedButtonState;
   }
 
-  // Log FSM state for validation (temporary, per requirements)
-  Serial.printf("[FSM] state=%d pressed=%d buttonDown=%d\n", (int)gestureState, pressed, buttonDown);
+  // Log FSM state for validation (only when INPUT_DEBUG is enabled)
+  INPUT_LOG("[FSM] state=%d pressed=%d buttonDown=%d firstClick=%lu\n", (int)gestureState, pressed, buttonDown, firstClickReleaseTime);
 
   // Handle CONSUMED_UNTIL_RELEASE state - block all processing until button is released
   if(gestureState == ButtonGestureState::CONSUMED_UNTIL_RELEASE){
     if(!pressed){
       // Button released, reset to IDLE and resume normal operation
       resetGestureState();
+      INPUT_LOG("[FSM] Transition CONSUMED_UNTIL_RELEASE->IDLE\n");
     }
     return EVENT_NONE;
   }
@@ -182,6 +193,7 @@ EventType readButtonEvent(){
       buttonDown = true;
       buttonDownTime = now;
       Serial.printf("[EVENT] %d\n", EVENT_DOUBLE_CLICK);
+      INPUT_LOG("[FSM] Transition WAITING_SECOND_CLICK->CONSUMED_UNTIL_RELEASE\n");
       gestureState = ButtonGestureState::CONSUMED_UNTIL_RELEASE;
       return EVENT_DOUBLE_CLICK;
     }

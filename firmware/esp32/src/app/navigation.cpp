@@ -81,8 +81,18 @@ void markChanged(){
 void commit(){
     if (!transitionPending) return;
 
+    // Temporary instrumentation for root-cause validation
+    Serial.printf("[NAV COMMIT] current=%d next=%d previous=%d depth=%d\n",
+        (int)AppNavigation::current(),
+        (int)nextState,
+        (int)NavigationStack::previous(),
+        NavigationStack::depth());
+
     if (isMainState(nextState) && isMainState(current())) {
         NavigationStack::replace(nextState);
+    } else if (nextState == NavigationStack::previous()) {
+        // Going back to the previous state on the stack - pop instead of pushing
+        NavigationStack::pop();
     } else if (nextState == NavigationStack::peek()) {
         NavigationStack::pop();
     } else {

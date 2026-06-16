@@ -24,9 +24,14 @@ void begin() {
 
 bool push(AppState state) {
   if (stackDepth >= MAX_STACK_DEPTH) {
+    // Temporary instrumentation for root-cause validation
+    Serial.printf("[NAV ERROR] stack full depth=%d state=%d\n", stackDepth, (int)state);
     LOG_WARN(LogTag::APP, "[NAV] Stack full, cannot push state");
     return false;
   }
+  
+  // Temporary instrumentation for root-cause validation
+  Serial.printf("[NAV PUSH] state=%d depth_before=%d\n", (int)state, stackDepth);
   
   // Avoid pushing the same state twice consecutively
   if (stackDepth > 0 && stack[stackDepth - 1] == state) {
@@ -45,6 +50,9 @@ bool pop() {
     LOG_INFO(LogTag::APP, "[NAV] At HOME, cannot pop");
     return false;
   }
+  
+  // Temporary instrumentation for root-cause validation
+  Serial.printf("[NAV POP] depth_before=%d\n", stackDepth);
   
   stackDepth--;
   LOG_INFO(LogTag::APP, "[NAV] Pop state, depth now %d", stackDepth);
