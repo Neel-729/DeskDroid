@@ -1,7 +1,7 @@
 # DeskDroid
 ### A modular dual-MCU smart desktop ecosystem focused on automation, real-time interaction, embedded systems engineering, and scalable hardware architecture.
 
-[![Static Badge](https://img.shields.io/badge/Version-2.6.5-green)](https://github.com/Neel-729/DeskDroid)
+[![Static Badge](https://img.shields.io/badge/Version-2.6.7-green)](https://github.com/Neel-729/DeskDroid)
 [![Static Badge](https://img.shields.io/badge/Previous--version-2.5-orange)](https://github.com/Neel-729/DeskDroid/blob/main/DeskDroidArchives/v2.5.main.cpp)
 [![Static Badge](https://img.shields.io/badge/ESP32-Main%20Controller-blue)](#firmware-architecture)
 [![Static Badge](https://img.shields.io/badge/ESP8266-Output%20Processor-lightgrey)](#firmware-architecture)
