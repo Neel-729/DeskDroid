@@ -153,34 +153,41 @@ void adjustValue(int step){
     AppCommands::applySettings(deviceSettings);
     LightingService::refreshSchedule(deviceSettings);
   }
-  else if(settingsIndex==10){
-    if(adjustHourField) adjustHour=(adjustHour+step+24)%24;
-    else adjustMinute=(adjustMinute+step+60)%60;
-  }
-  else if(settingsIndex==11){
-    if(adjustDateField==DATE_DAY){
-      int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth);
-      int d = (int)adjustDay + step;
-      if(d < 1) d = maxd;
-      if(d > maxd) d = 1;
-      adjustDay = (uint8_t)d;
-    }
-    else if(adjustDateField==DATE_MONTH){
-      int mo = (int)adjustMonth + step;
-      if(mo < 1) mo = 12;
-      if(mo > 12) mo = 1;
-      adjustMonth = (uint8_t)mo;
-      int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth);
-      if(adjustDay > maxd) adjustDay = maxd;
-    }
-    else{
-      int y = (int)adjustYear + step;
-      if(y < 2000) y = 2000;
-      if(y > 2099) y = 2099;
-      adjustYear = (uint16_t)y;
-      int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth);
-      if(adjustDay > maxd) adjustDay = maxd;
-    }
+  else if(settingsIndex == 10) {  // Time Format - toggle 12H/24H 
+    deviceSettings.format24 = !deviceSettings.format24; 
+    AppCommands::applySettings(deviceSettings); 
+  } 
+  else if(settingsIndex == 11) {  // Adjust Time 
+    if (adjustHourField) { 
+        adjustHour = (adjustHour + step + 24) % 24; 
+    } else { 
+        adjustMinute = (adjustMinute + step + 60) % 60; 
+    } 
+  } 
+  else if(settingsIndex == 12) {  // Adjust Date 
+    if (adjustDateField == DATE_DAY) { 
+        int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth); 
+        int d = (int)adjustDay + step; 
+        if (d < 1) d = maxd; 
+        if (d > maxd) d = 1; 
+        adjustDay = (uint8_t)d; 
+    } 
+    else if (adjustDateField == DATE_MONTH) { 
+        int mo = (int)adjustMonth + step; 
+        if (mo < 1) mo = 12; 
+        if (mo > 12) mo = 1; 
+        adjustMonth = (uint8_t)mo; 
+        int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth); 
+        if (adjustDay > maxd) adjustDay = maxd; 
+    } 
+    else {  // YEAR 
+        int y = (int)adjustYear + step; 
+        if (y < 2000) y = 2000; 
+        if (y > 2099) y = 2099; 
+        adjustYear = (uint16_t)y; 
+        int maxd = DateUtils::daysInMonth(adjustYear, adjustMonth); 
+        if (adjustDay > maxd) adjustDay = maxd; 
+    } 
   }
   else if(settingsIndex==0){
     deviceSettings.brightness = !deviceSettings.brightness;
