@@ -262,6 +262,7 @@ void renderTimerScreen(AppState state, const TimerScreenData &data, bool blinkSt
     return;
   }
 
+  // === REMOVED QUICK PAUSED EDIT: Removed paused-state minutes blinking
   if(data.running){
     if(blinkState) writeRow(0,"Timer Running");
     else writeRow(0,"Timer        ");

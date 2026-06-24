@@ -24,3 +24,6 @@ ESP8266
 | D5   | Relay 3           |
 | D6   | Relay 4           |
 
+
+
+refractor settings flow

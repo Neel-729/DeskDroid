@@ -19,6 +19,7 @@ bool isRunning();
 bool isPaused();
 bool isEditing();
 bool isComplete();
+bool isIdle();
 
 unsigned long remainingMillis(unsigned long now);
 unsigned long totalMillis();

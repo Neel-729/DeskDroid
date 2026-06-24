@@ -71,6 +71,10 @@ bool isComplete(){
   return SystemStateStore::current().timer.state == TimerStateValue::COMPLETE;
 }
 
+bool isIdle(){
+  return SystemStateStore::current().timer.state == TimerStateValue::IDLE;
+}
+
 unsigned long remainingMillis(unsigned long now){
   const TimerState &timer = SystemStateStore::current().timer;
   if(timer.state == TimerStateValue::RUNNING){
@@ -94,6 +98,8 @@ uint8_t minutes(){
 uint8_t seconds(){
   return SystemStateStore::current().timer.seconds;
 }
+
+
 
 void adjustEdit(int step){
   const TimerState &timer = SystemStateStore::current().timer;

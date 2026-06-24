@@ -357,6 +357,12 @@ void handleEvent(const AppEvent &event, unsigned long now){
 
       case STATE_CLOCK:
       case STATE_TIMER_VIEW:
+        // === REMOVED QUICK PAUSED EDIT: Paused state now does normal screen navigation
+        // Rotate between main screens regardless of timer state (IDLE/RUNNING/PAUSED)
+        AppNavigation::rotateMainState(step);
+        AudioService::beep(20);
+        break;
+
       case STATE_STOPWATCH:
       case STATE_REMINDER_HOME:
       case STATE_SETTINGS_HOME:
@@ -377,10 +383,22 @@ void handleEvent(const AppEvent &event, unsigned long now){
 
       case STATE_TIMER_VIEW:
         {
-          const auto& timer = SystemStateStore::current().timer;
-          if (timer.state == TimerStateValue::RUNNING) {
+          // === FIXED: Corrected IDLE state single click behavior
+          // Single click handling per timer state:
+          // - IDLE: enterRunning() (start timer)
+          // - RUNNING: enterPaused()
+          // - PAUSED: enterRunning() (resume)
+          // - COMPLETE: enterEditing()
+          if(TimerFeature::isRunning()){
             TimerFeature::enterPaused(now);
+          } else if(TimerFeature::isPaused()){
+            TimerFeature::enterRunning(now);
+          } else if(TimerFeature::isComplete()){
+            // COMPLETE: enter editing mode to set new time
+            TimerFeature::enterEditing();
+            AppNavigation::enter(STATE_TIMER_EDIT);
           } else {
+            // IDLE: start the timer
             TimerFeature::enterRunning(now);
           }
         }
@@ -465,13 +483,42 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_TIMER_VIEW:
-        if (!TimerFeature::isRunning()) {
+        // === DOUBLE-CLICK FIXED: Implemented state-specific double-click behavior
+        // Double click handling per timer state (exact spec):
+        // - IDLE: Enter Edit mode
+        // - RUNNING: Pause + Reset
+        // - PAUSED: Reset
+        // - COMPLETE: Reset + Return to home
+        if(TimerFeature::isIdle()){
+          // IDLE: Enter Edit mode (only state that enters edit on double click)
           TimerFeature::enterEditing();
+          AppNavigation::enter(STATE_TIMER_EDIT);
+        } else if(TimerFeature::isRunning()){
+          // RUNNING: Pause + Reset
+          TimerFeature::enterPaused(now);
+          TimerFeature::confirmReset();
+          AppNavigation::markChanged();
+          AudioService::beep(40);
+        } else if(TimerFeature::isPaused()){
+          // PAUSED: Reset
+          TimerFeature::confirmReset();
+          AppNavigation::markChanged();
+          AudioService::beep(40);
+        } else if(TimerFeature::isComplete()){
+          // COMPLETE: Reset + Return to home (clock screen)
+          TimerFeature::confirmReset();
+          AppNavigation::enter(STATE_CLOCK);
+          AppNavigation::markChanged();
+          AudioService::beep(40);
         }
         break;
 
       case STATE_TIMER_EDIT:
+        // === DOUBLE-CLICK FIXED: EDITING: Save & Return to Paused/IDLE
+        // Double click in editing: save and exit to timer view state
+        TimerFeature::exitEditing();
         AppNavigation::enter(STATE_TIMER_VIEW);
+        AppNavigation::markChanged();
         break;
 
       case STATE_STOPWATCH:
@@ -492,7 +539,16 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_TIMER_VIEW:
-        TimerFeature::confirmReset();
+        // Long press in view state: reset timer if running or paused
+        if(TimerFeature::isRunning() || TimerFeature::isPaused()){
+          TimerFeature::confirmReset();
+        }
+        break;
+
+      case STATE_TIMER_EDIT:
+        // Long press in editing: cancel changes and exit to view state
+        TimerFeature::exitEditing();
+        AppNavigation::enter(STATE_TIMER_VIEW);
         break;
 
       case STATE_STOPWATCH:

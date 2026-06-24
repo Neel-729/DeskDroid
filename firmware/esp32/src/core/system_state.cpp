@@ -286,6 +286,8 @@ void setTimerClockFields(uint8_t hours, uint8_t minutes, uint8_t seconds){
   markChanged(StateChange::Timer);
 }
 
+
+
 void setTimerEditField(TimerEditField field){
   if(state.timer.editField == field) return;
   state.timer.editField = field;
