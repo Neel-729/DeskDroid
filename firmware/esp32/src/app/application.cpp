@@ -415,6 +415,10 @@ void handleEvent(const AppEvent &event, unsigned long now){
 
       case STATE_STOPWATCH:
         {
+          // Single press handling per stopwatch state (exact spec):
+          // - IDLE: Start
+          // - RUNNING: Pause
+          // - PAUSED: Resume
           const auto& stopwatch = SystemStateStore::current().stopwatch;
           if (stopwatch.state == StopwatchStateValue::RUNNING) {
             StopwatchFeature::stop(now);
@@ -522,7 +526,19 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_STOPWATCH:
-        AppNavigation::goHome();
+        {
+          // Double click handling per stopwatch state (exact spec):
+          // - IDLE: Do nothing
+          // - RUNNING: Reset
+          // - PAUSED: Reset
+          const auto& stopwatch = SystemStateStore::current().stopwatch;
+          if (stopwatch.state == StopwatchStateValue::RUNNING || stopwatch.state == StopwatchStateValue::PAUSED) {
+            StopwatchFeature::reset();
+            AppNavigation::markChanged();
+            AudioService::beep(40);
+          }
+          // IDLE state: do nothing as required
+        }
         break;
 
       default:
@@ -552,8 +568,20 @@ void handleEvent(const AppEvent &event, unsigned long now){
         break;
 
       case STATE_STOPWATCH:
-        StopwatchFeature::reset();
-        AudioService::beep(120);
+        {
+          // Long press handling per stopwatch state (exact spec):
+          // - IDLE: Return to home screen
+          // - RUNNING: Reset and return to home screen
+          // - PAUSED: Reset and return to home screen
+          const auto& stopwatch = SystemStateStore::current().stopwatch;
+          if (stopwatch.state == StopwatchStateValue::RUNNING || stopwatch.state == StopwatchStateValue::PAUSED) {
+            // If running or paused, first reset then go home
+            StopwatchFeature::reset();
+          }
+          // Always return to home screen on long press, regardless of state
+          AppNavigation::goHome();
+          AudioService::beep(200); // Distinct beep for long press home
+        }
         break;
 
       case STATE_TIMER_ALARM:
