@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Arduino.h>
-
 #include "../core/settings_store.h"
 
 namespace SettingsFlow {
