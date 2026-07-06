@@ -11,6 +11,7 @@
 #include "transport/itransport.h"
 #include "transport/http_transport.h"
 #include "verification/iverifier.h"
+#include "installer/iinstaller.h"
 
 namespace UpdateManager {
 void begin();
@@ -30,6 +31,11 @@ bool isTransportAvailable();
 void registerVerifier(Verification::IVerifier* verifier);
 bool hasVerifier();
 const Verification::IVerifier* currentVerifier(); // Get current verifier instance
+
+// Installer registration (Phase 6A)
+void registerInstaller(Installation::IInstaller* installer);
+bool hasInstaller();
+const Installation::IInstaller* currentInstaller(); // Get current installer instance
 
 VersionComparison compareVersions(uint32_t currentVersionCode, uint32_t remoteVersionCode);
 

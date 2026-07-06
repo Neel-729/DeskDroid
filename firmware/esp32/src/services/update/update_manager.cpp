@@ -13,6 +13,7 @@ static NullUpdateProvider s_nullProvider;
 static IUpdateProvider* s_currentProvider = &s_nullProvider;
 static Transport::ITransport* s_currentTransport = nullptr; // Transport layer instance
 static Verification::IVerifier* s_currentVerifier = nullptr; // Verification layer instance (Phase 5)
+static Installation::IInstaller* s_currentInstaller = nullptr; // Installation layer instance (Phase 6A)
 static UpdateInfo s_latestUpdateInfo; // Cached latest available update information
 static UpdateDecisionContext s_lastDecisionContext; // Cached last decision context
 
@@ -95,6 +96,28 @@ bool hasVerifier() {
 
 const Verification::IVerifier* currentVerifier() {
     return s_currentVerifier;
+}
+
+// Phase 6A installer implementations
+void registerInstaller(Installation::IInstaller* installer) {
+    s_currentInstaller = installer;
+    if (s_currentInstaller && !s_currentInstaller->isReady()) {
+        s_currentInstaller->initialize();
+    }
+    
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_currentInstaller) {
+        LOG_INFO(LogTag::UPDATE, "Installer registered successfully");
+    }
+#endif
+}
+
+bool hasInstaller() {
+    return s_currentInstaller != nullptr && s_currentInstaller->isReady();
+}
+
+const Installation::IInstaller* currentInstaller() {
+    return s_currentInstaller;
 }
 
 VersionComparison compareVersions(uint32_t currentVersionCode, uint32_t remoteVersionCode) {
