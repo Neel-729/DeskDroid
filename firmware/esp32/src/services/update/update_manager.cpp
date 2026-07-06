@@ -12,6 +12,7 @@ static FirmwareInfo s_firmwareInfo;
 static NullUpdateProvider s_nullProvider;
 static IUpdateProvider* s_currentProvider = &s_nullProvider;
 static Transport::ITransport* s_currentTransport = nullptr; // Transport layer instance
+static Verification::IVerifier* s_currentVerifier = nullptr; // Verification layer instance (Phase 5)
 static UpdateInfo s_latestUpdateInfo; // Cached latest available update information
 static UpdateDecisionContext s_lastDecisionContext; // Cached last decision context
 
@@ -72,6 +73,28 @@ UpdateState state() {
 
 const IUpdateProvider& currentProvider() {
     return *s_currentProvider;
+}
+
+// Phase 5 verifier implementations
+void registerVerifier(Verification::IVerifier* verifier) {
+    s_currentVerifier = verifier;
+    if (s_currentVerifier && !s_currentVerifier->isReady()) {
+        s_currentVerifier->initialize();
+    }
+    
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_currentVerifier) {
+        LOG_INFO(LogTag::UPDATE, "Verifier registered successfully");
+    }
+#endif
+}
+
+bool hasVerifier() {
+    return s_currentVerifier != nullptr && s_currentVerifier->isReady();
+}
+
+const Verification::IVerifier* currentVerifier() {
+    return s_currentVerifier;
 }
 
 VersionComparison compareVersions(uint32_t currentVersionCode, uint32_t remoteVersionCode) {

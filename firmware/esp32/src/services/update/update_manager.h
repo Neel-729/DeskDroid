@@ -10,6 +10,7 @@
 #include "models/update_decision.h"
 #include "transport/itransport.h"
 #include "transport/http_transport.h"
+#include "verification/iverifier.h"
 
 namespace UpdateManager {
 void begin();
@@ -24,6 +25,11 @@ const Transport::ITransport* currentTransport(); // Get current transport instan
 // Transport registration
 void registerTransport(Transport::ITransport* transport);
 bool isTransportAvailable();
+
+// Verifier registration (Phase 5)
+void registerVerifier(Verification::IVerifier* verifier);
+bool hasVerifier();
+const Verification::IVerifier* currentVerifier(); // Get current verifier instance
 
 VersionComparison compareVersions(uint32_t currentVersionCode, uint32_t remoteVersionCode);
 
