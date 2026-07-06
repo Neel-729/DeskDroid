@@ -8,6 +8,8 @@
 #include "providers/null_provider.h"
 #include "models/update_info.h"
 #include "models/update_decision.h"
+#include "transport/itransport.h"
+#include "transport/http_transport.h"
 
 namespace UpdateManager {
 void begin();
@@ -17,6 +19,11 @@ bool isInitialized();
 const FirmwareInfo& firmwareInfo();
 UpdateState state();
 const IUpdateProvider& currentProvider();
+const Transport::ITransport* currentTransport(); // Get current transport instance
+
+// Transport registration
+void registerTransport(Transport::ITransport* transport);
+bool isTransportAvailable();
 
 VersionComparison compareVersions(uint32_t currentVersionCode, uint32_t remoteVersionCode);
 

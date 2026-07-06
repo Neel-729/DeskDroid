@@ -4,12 +4,14 @@
 #include "version_compare.h"
 #include "models/update_validator.h"
 #include "models/update_decision.h"
+#include "transport/itransport.h"
 
 static bool s_initialized = false;
 static UpdateState s_currentState = UpdateState::Idle;
 static FirmwareInfo s_firmwareInfo;
 static NullUpdateProvider s_nullProvider;
 static IUpdateProvider* s_currentProvider = &s_nullProvider;
+static Transport::ITransport* s_currentTransport = nullptr; // Transport layer instance
 static UpdateInfo s_latestUpdateInfo; // Cached latest available update information
 static UpdateDecisionContext s_lastDecisionContext; // Cached last decision context
 
@@ -31,6 +33,15 @@ void begin() {
         LOG_INFO(LogTag::UPDATE, "Provider: %s", s_currentProvider->providerName());
     }
     
+    // Initialize transport if available
+    if (s_currentTransport) {
+        if (s_currentTransport->initialize()) {
+            LOG_INFO(LogTag::UPDATE, "Transport: %s initialized", s_currentTransport->transportName());
+        } else {
+            LOG_WARN(LogTag::UPDATE, "Transport initialization failed: %d", static_cast<uint8_t>(s_currentTransport->lastError()));
+        }
+    }
+    
     s_initialized = true;
     
     // Log initialization - single optional startup message
@@ -42,6 +53,9 @@ void loop() {
     if (s_currentProvider) {
         s_currentProvider->loop();
     }
+    
+    // Transport doesn't need a loop in current passive implementation,
+    // but structure is in place for future transport implementations that might need it
 }
 
 bool isInitialized() {
@@ -137,6 +151,36 @@ UpdateDecisionContext getUpdateDecisionContext() {
     return s_lastDecisionContext;
 }
 
+const Transport::ITransport* currentTransport() {
+    return s_currentTransport;
+}
+
+void registerTransport(Transport::ITransport* transport) {
+    // If we have an existing transport, shutdown first
+    if (s_currentTransport && s_currentTransport != transport) {
+        s_currentTransport->shutdown();
+    }
+    
+    s_currentTransport = transport;
+    
+    // If we're already initialized, initialize the new transport immediately
+    if (s_initialized && s_currentTransport) {
+        if (!s_currentTransport->initialize()) {
+            LOG_WARN(LogTag::UPDATE, "Late transport initialization failed: %d", 
+                     static_cast<uint8_t>(s_currentTransport->lastError()));
+        } else {
+            LOG_INFO(LogTag::UPDATE, "Late transport initialized: %s", 
+                     s_currentTransport->transportName());
+        }
+    }
+}
+
+bool isTransportAvailable() {
+    return s_currentTransport != nullptr;
+}
+
+
+
 void printUpdateStatus() {
 #ifdef OTA_PLATFORM_VALIDATION
     LOG_INFO(LogTag::UPDATE, "=== OTA Update Status Diagnostics ===");
@@ -144,6 +188,21 @@ void printUpdateStatus() {
              s_firmwareInfo.firmwareVersion, s_firmwareInfo.versionCode);
     LOG_INFO(LogTag::UPDATE, "Hardware revision: %s", 
              s_firmwareInfo.hardwareRevision);
+    
+    // Print transport status if available
+    if (s_currentTransport) {
+        LOG_INFO(LogTag::UPDATE, "Transport: %s", s_currentTransport->transportName());
+        LOG_INFO(LogTag::UPDATE, "  State: %d", static_cast<uint8_t>(s_currentTransport->state()));
+        LOG_INFO(LogTag::UPDATE, "  Busy: %s", s_currentTransport->isBusy() ? "Yes" : "No");
+        LOG_INFO(LogTag::UPDATE, "  Supports resume: %s", s_currentTransport->supportsResume() ? "Yes" : "No");
+        LOG_INFO(LogTag::UPDATE, "  Supports streaming: %s", s_currentTransport->supportsStreaming() ? "Yes" : "No");
+        
+        if (s_currentTransport->isBusy()) {
+            const auto& progress = s_currentTransport->progress();
+            LOG_INFO(LogTag::UPDATE, "  Progress: %u/%u bytes (%u%%)", 
+                     progress.bytesTransferred, progress.expectedSize, progress.percentage());
+        }
+    }
     
     if (s_latestUpdateInfo.isValid()) {
         LOG_INFO(LogTag::UPDATE, "Latest available update: v%s (%d)", 
