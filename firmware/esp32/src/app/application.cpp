@@ -131,13 +131,21 @@ bool bootAnimation(unsigned long now){
       UiScreens::renderBootScreen(FIRMWARE_VERSION, frames[stage-1]);
       lastStep=now;
       if(stage==6) AudioService::beep(50);
-      if(stage==8) AudioService::beep(50);
+      if(stage==8) AudioService::beep(50); // Trigger final beep in stage 8
       HardwareRequests::executePending();
       stage++;
     }
   }
 
-  if(stage>8){
+  // Final stage - remain in boot animation for one more interval to service the buzzer
+  if(stage==9){
+    if(now-lastStep>150){
+      stage++;
+    }
+    return false; // Keep the boot loop running to continue servicing AudioService
+  }
+
+  if(stage>9){
     stage=0;
     return true;
   }
@@ -1320,7 +1328,6 @@ void setup(){
 
   const unsigned long now = millis();
   ClockFeature::begin(now);
-  HardwareRequests::clearDisplay();
   UiScreens::clearFrame();
   lastUiFrameValid = false;
   scheduler.reset(now);

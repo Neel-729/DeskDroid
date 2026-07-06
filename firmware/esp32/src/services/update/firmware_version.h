@@ -4,8 +4,8 @@
 
 // Canonical firmware version definition - single source of truth
 #define FIRMWARE_VERSION_MAJOR 2
-#define FIRMWARE_VERSION_MINOR 7
-#define FIRMWARE_VERSION_PATCH 0
+#define FIRMWARE_VERSION_MINOR 8
+#define FIRMWARE_VERSION_PATCH 1
 
 // Helper macros for string conversion
 #define STRINGIFY(x) #x
