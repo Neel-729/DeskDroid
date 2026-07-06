@@ -2,6 +2,12 @@
 
 #include <esp_system.h>
 #include <Arduino.h>
+#if OTA_PLATFORM_VALIDATION
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <Preferences.h>
+#include <SPIFFS.h>
+#endif
 
 #include "application_commands.h"
 #include "hardware_requests.h"
@@ -1188,6 +1194,116 @@ void logOverrunAttributionSummary(){
 
 }
 
+#if OTA_PLATFORM_VALIDATION
+void runOtaPlatformValidation() {
+  LOG_INFO(LogTag::APP, "========== OTA PLATFORM VALIDATION ==========");
+  
+  // Test 1 & 5: Boot Test and OTA Capability Detection
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  const esp_partition_t *boot_partition = esp_ota_get_boot_partition();
+  bool partitionsValid = (running != nullptr && boot_partition != nullptr);
+  
+  if (partitionsValid) {
+    LOG_INFO(LogTag::APP, "Boot OK");
+    LOG_INFO(LogTag::APP, "Running Partition : %s", running->label);
+    LOG_INFO(LogTag::APP, "Boot Partition    : %s", boot_partition->label);
+    
+    // Get partition subtype info
+    LOG_INFO(LogTag::APP, "Running Subtype   : 0x%x", running->subtype);
+    LOG_INFO(LogTag::APP, "Boot Subtype      : 0x%x", boot_partition->subtype);
+    
+    // Count total OTA app partitions
+    uint8_t ota_app_count = 0;
+    esp_partition_iterator_t iter = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    while (iter != NULL) {
+      const esp_partition_t *part = esp_partition_get(iter);
+      if (part->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_0 && part->subtype <= ESP_PARTITION_SUBTYPE_APP_OTA_15) {
+        ota_app_count++;
+      }
+      iter = esp_partition_next(iter);
+    }
+    esp_partition_iterator_release(iter);
+    LOG_INFO(LogTag::APP, "Total OTA apps    : %u", ota_app_count);
+  } else {
+    LOG_INFO(LogTag::APP, "Boot FAILED - Could not get partition info");
+  }
+  
+  // Test 2: Preferences Test
+  bool prefsPass = false;
+  Preferences validationPrefs;
+  if (validationPrefs.begin("ota_validation", false)) {
+    // Write test values
+    validationPrefs.putInt("test_int", 42);
+    validationPrefs.putString("test_str", "DeskDroid OTA test");
+    validationPrefs.putBool("test_bool", true);
+    
+    // Read and verify
+    int readInt = validationPrefs.getInt("test_int", 0);
+    String readStr = validationPrefs.getString("test_str", "");
+    bool readBool = validationPrefs.getBool("test_bool", false);
+    
+    if (readInt == 42 && readStr == "DeskDroid OTA test" && readBool == true) {
+      // Overwrite test
+      validationPrefs.putInt("test_int", 84);
+      int readInt2 = validationPrefs.getInt("test_int", 0);
+      
+      if (readInt2 == 84) {
+        prefsPass = true;
+        // Clean up test data
+        validationPrefs.remove("test_int");
+        validationPrefs.remove("test_str");
+        validationPrefs.remove("test_bool");
+      }
+    }
+    validationPrefs.end();
+  }
+  LOG_INFO(LogTag::APP, "Preferences       : %s", prefsPass ? "PASS" : "FAIL");
+  
+  // Test 3: Filesystem Test
+  bool fsPass = false;
+  if (SPIFFS.begin(true)) {
+    File testFile = SPIFFS.open("/ota_test.txt", "w");
+    if (testFile) {
+      const char* testData = "DeskDroid SPIFFS OTA validation test";
+      size_t bytesWritten = testFile.write((const uint8_t*)testData, strlen(testData));
+      testFile.close();
+      
+      if (bytesWritten == strlen(testData)) {
+        File readFile = SPIFFS.open("/ota_test.txt", "r");
+        if (readFile) {
+          size_t fileSize = readFile.size();
+          uint8_t* buffer = new uint8_t[fileSize];
+          size_t bytesRead = readFile.read(buffer, fileSize);
+          readFile.close();
+          
+          if (bytesRead == fileSize && memcmp(buffer, testData, fileSize) == 0) {
+            fsPass = true;
+          }
+          delete[] buffer;
+        }
+        // Clean up
+        SPIFFS.remove("/ota_test.txt");
+      }
+    }
+    SPIFFS.end();
+  }
+  LOG_INFO(LogTag::APP, "Filesystem        : %s", fsPass ? "PASS" : "FAIL");
+  
+  // Test 6: Memory Validation
+  uint32_t freeHeap = ESP.getFreeHeap();
+  uint32_t sketchSize = ESP.getSketchSize();
+  uint32_t flashSize = ESP.getFlashChipSize();
+  LOG_INFO(LogTag::APP, "Heap              : %u bytes", freeHeap);
+  LOG_INFO(LogTag::APP, "Sketch Size       : %u bytes", sketchSize);
+  LOG_INFO(LogTag::APP, "Flash Size        : %u bytes", flashSize);
+  
+  // Overall result
+  bool overallPass = partitionsValid && prefsPass && fsPass;
+  LOG_INFO(LogTag::APP, "Validation Result : %s", overallPass ? "PASS" : "FAIL");
+  LOG_INFO(LogTag::APP, "=============================================");
+}
+#endif
+
 namespace Application {
 
 void setup(){
@@ -1208,6 +1324,9 @@ void setup(){
   lastUiFrameValid = false;
   scheduler.reset(now);
   LOG_INFO(LogTag::APP, "DeskDroid %s ready with %u scheduled tasks", FIRMWARE_VERSION, scheduler.taskCount());
+#if OTA_PLATFORM_VALIDATION
+  runOtaPlatformValidation();
+#endif
 }
 
 void loop(){
