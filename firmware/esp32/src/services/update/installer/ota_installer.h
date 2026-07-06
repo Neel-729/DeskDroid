@@ -39,11 +39,17 @@ private:
     void transitionTo(InstallationState newState);
     
     // Internal state reset helpers
+    void cleanupOtaSession();
     void clearInternalState();
     void setError(InstallationError error, const char* message);
     
     // Session management
     uint64_t generateSessionId();
+    
+    // Debug-only invariant validation
+    #ifdef OTA_PLATFORM_VALIDATION
+    void validateProgressInvariants();
+    #endif
 
     // State tracking
     InstallationState _currentState;

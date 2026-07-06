@@ -152,30 +152,66 @@ struct VerifiedPayloadDescriptor {
 };
 
 /**
- * @brief Installation handle - placeholder for future ESP-IDF OTA handle
+ * @brief OTA session state - strongly typed lifecycle states for the ESP-IDF OTA session
  * 
- * This handle will eventually contain:
- * - esp_ota_handle_t for ESP-IDF OTA operations
- * - partition pointer to the target OTA partition
- * - Internal session metadata for the ongoing installation
+ * Used internally by InstallationHandle to track the exact state of the OTA session.
+ * Prevents invalid operations like calling esp_ota_abort() on a closed session.
+ */
+enum class OtaSessionState : uint8_t {
+    Invalid,            ///< No session exists, handle is uninitialized
+    PartitionSelected,  ///< OTA partition has been discovered and selected
+    SessionOpen,        ///< ESP-IDF OTA session is actively open (esp_ota_begin() succeeded)
+    SessionClosed       ///< OTA session has been closed (either via abort or cleanup)
+};
+
+/**
+ * @brief Installation handle - encapsulates ESP-IDF OTA session resources
  * 
- * Phase 6A: Lightweight placeholder to maintain architectural stability
+ * This handle contains:
+ * - OTA session handle for ESP-IDF OTA operations (stored as opaque uint32_t)
+ * - Partition pointer to the target OTA partition (stored as opaque uintptr_t)
+ * - Strongly typed session state to track lifecycle
+ * 
+ * Phase 6B.1 fix: Uses opaque storage to avoid ESP-IDF type leaks into public headers
+ * No ESP-IDF types are exposed in this public header
  */
 struct InstallationHandle {
-    uint32_t _handlePlaceholder;     ///< Future: esp_ota_handle_t
-    uint32_t _partitionPlaceholder;   ///< Future: pointer to OTA partition
-    bool _isValid;                    ///< Whether this handle is initialized
+    // Opaque storage for ESP-IDF types - maintains perfect platform independence
+    uint32_t _otaHandle;              ///< Opaque storage for esp_ota_handle_t (32-bit value)
+    uintptr_t _partition;             ///< Opaque storage for const esp_partition_t* (pointer-sized integer)
+    OtaSessionState _sessionState;    ///< Current state of the OTA session
 
     InstallationHandle()
-        : _handlePlaceholder(0xFFFFFFFF)
-        , _partitionPlaceholder(0xFFFFFFFF)
-        , _isValid(false) {}
+        : _otaHandle(0)
+        , _partition(0)
+        , _sessionState(OtaSessionState::Invalid) {}
+    
+    /**
+     * @brief Check if session can be aborted (only valid in SessionOpen state)
+     */
+    bool canAbort() const {
+        return _sessionState == OtaSessionState::SessionOpen;
+    }
+    
+    /**
+     * @brief Check if session is actively open
+     */
+    bool isOpen() const {
+        return _sessionState == OtaSessionState::SessionOpen;
+    }
+    
+    /**
+     * @brief Check if partition has been selected
+     */
+    bool hasPartition() const {
+        return _sessionState >= OtaSessionState::PartitionSelected && _partition != 0;
+    }
 };
 
 /**
  * @brief Installation session - lightweight unique session tracking
  * Fully POD, zero heap allocations, tracks per-installation metadata
- * Future-ready to contain the InstallationHandle for ESP-IDF integration
+ * Phase 6B.1 audit: Uses strongly typed OtaSessionState from InstallationHandle
  */
 struct InstallationSession {
     uint64_t sessionId;               ///< Unique 64-bit identifier for this installation
@@ -185,7 +221,7 @@ struct InstallationSession {
     uint32_t chunksWritten;           ///< Number of data chunks successfully written
     uint32_t lastChunkSize;           ///< Size of the last written chunk
     uint64_t lastWriteTimestampMs;    ///< Timestamp of last successful write
-    InstallationHandle otaHandle;     ///< Future ESP-IDF OTA session handle (Phase 6B)
+    InstallationHandle otaHandle;     ///< ESP-IDF OTA session handle with lifecycle tracking
 
     InstallationSession()
         : sessionId(0)
