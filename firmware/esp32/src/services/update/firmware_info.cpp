@@ -1,4 +1,5 @@
 #include "firmware_info.h"
+#include "firmware_version.h"
 #include "esp_ota_ops.h"
 
 static FirmwareInfo s_currentInfo;
@@ -7,13 +8,13 @@ namespace FirmwareMetadata {
 void populate(FirmwareInfo& info) {
     // Populate basic firmware metadata - these can be configured via build flags
     info.firmwareName = "DeskDroid";
-    info.firmwareVersion = __DATE__;
-    info.versionCode = 1; // Initial version code, can be incremented in future builds
+    info.firmwareVersion = FIRMWARE_VERSION_STRING;
+    info.versionCode = FIRMWARE_VERSION_CODE;
     info.buildDate = __DATE__;
     info.buildTime = __TIME__;
     info.firmwareChannel = "stable";
-    info.hardwareRevision = "1.0";
-    info.protocolVersion = 1;
+    info.hardwareRevision = HARDWARE_REVISION;
+    info.protocolVersion = PROTOCOL_VERSION;
     info.otaSupported = true;
 
     // Get running and boot partition information from ESP-IDF
