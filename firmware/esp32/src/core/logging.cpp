@@ -20,6 +20,7 @@ const char* tagName(LogTag tag){
     case LogTag::PROTO: return "PROTO";
     case LogTag::SCHED: return "SCHED";
     case LogTag::SYSTEM: return "SYSTEM";
+    case LogTag::UPDATE: return "UPDATE";
   }
   return "?";
 }

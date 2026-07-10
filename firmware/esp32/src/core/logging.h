@@ -12,7 +12,8 @@ enum class LogTag : uint8_t {
   HEARTBEAT,
   PROTO,
   SCHED,
-  SYSTEM
+  SYSTEM,
+  UPDATE
 };
 
 struct RateLimitedLog {
