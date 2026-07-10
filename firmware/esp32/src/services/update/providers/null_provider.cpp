@@ -30,6 +30,23 @@ const char* NullUpdateProvider::providerName() const {
     return "None";
 }
 
+UpdateDecisionContext NullUpdateProvider::checkForUpdate() {
+    return getUpdateDecision();
+}
+
+const UpdateInfo& NullUpdateProvider::latestUpdateInfo() const {
+    return m_dummyUpdateInfo;
+}
+
+const UpdateError& NullUpdateProvider::lastError() const {
+    return m_lastError;
+}
+
+void NullUpdateProvider::reset() {
+    m_dummyUpdateInfo = UpdateInfo();
+    m_lastError = UpdateError::ok();
+}
+
 UpdateDecisionContext NullUpdateProvider::getUpdateDecision() const {
     // Return a realistic NoUpdateAvailable decision with proper context
     return UpdateDecisionContext::create(

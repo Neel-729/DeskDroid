@@ -308,6 +308,21 @@ struct InstallationResult {
 };
 
 /**
+ * @brief Result of explicitly activating an already-installed firmware image
+ *
+ * Lightweight POD result for Phase 6B.4. The installer remains the owner of
+ * activation; callers must request it explicitly after a completed install.
+ */
+struct ActivationResult {
+    bool success;
+    InstallationError error;
+    const char* message;
+    bool rebootRequired;
+    bool bootPartitionChanged;
+    uint64_t activationTimestampMs;
+};
+
+/**
  * @brief Convert state to string for diagnostics
  */
 inline const char* stateToString(InstallationState state) {

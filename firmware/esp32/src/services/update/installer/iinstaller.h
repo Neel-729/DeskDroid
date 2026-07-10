@@ -43,10 +43,16 @@ public:
     virtual bool write(const void* data, size_t length) = 0;
 
     /**
-     * @brief Finalize the installation - complete all writes, verify, update boot partition
+     * @brief Finalize the installation - complete all writes and close the OTA transaction
      * @return InstallationResult with the final outcome
      */
     virtual InstallationResult finalizeInstallation() = 0;
+
+    /**
+     * @brief Activate an already-installed firmware as the next boot partition
+     * @return ActivationResult with the activation outcome
+     */
+    virtual ActivationResult activateInstalledFirmware() = 0;
 
     /**
      * @brief Abort the current installation immediately

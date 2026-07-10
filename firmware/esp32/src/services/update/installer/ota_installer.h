@@ -23,6 +23,7 @@ public:
     bool beginInstallation(const InstallationContext& context) override;
     bool write(const void* data, size_t length) override;
     InstallationResult finalizeInstallation() override;
+    ActivationResult activateInstalledFirmware() override;
     void abort() override;
     void reset() override;
     InstallationState state() const override;
@@ -61,6 +62,7 @@ private:
     InstallationSession _activeSession;
     
     bool _isInitialized;
+    bool _activationCompleted;
 
     // State transition matrix - defines ALL valid state transitions
     // Strict matrix - Completed state can ONLY transition out via explicit reset()

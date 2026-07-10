@@ -11,9 +11,14 @@ static UpdateState s_currentState = UpdateState::Idle;
 static FirmwareInfo s_firmwareInfo;
 static NullUpdateProvider s_nullProvider;
 static IUpdateProvider* s_currentProvider = &s_nullProvider;
+static GitHubProvider* s_githubProvider = nullptr;
 static Transport::ITransport* s_currentTransport = nullptr; // Transport layer instance
 static Verification::IVerifier* s_currentVerifier = nullptr; // Verification layer instance (Phase 5)
 static Installation::IInstaller* s_currentInstaller = nullptr; // Installation layer instance (Phase 6A)
+static Reboot::RebootController* s_currentRebootController = nullptr; // Reboot orchestration layer instance (Phase 6C.1)
+static BootValidation::BootValidationManager* s_currentBootValidationManager = nullptr; // Boot validation layer instance (Phase 6C.2)
+static Acceptance::FirmwareAcceptanceManager* s_currentFirmwareAcceptanceManager = nullptr; // Firmware acceptance layer instance (Phase 6C.3)
+static Rollback::RollbackManager* s_currentRollbackManager = nullptr; // Rollback layer instance (Phase 6D)
 static UpdateInfo s_latestUpdateInfo; // Cached latest available update information
 static UpdateDecisionContext s_lastDecisionContext; // Cached last decision context
 
@@ -76,6 +81,26 @@ const IUpdateProvider& currentProvider() {
     return *s_currentProvider;
 }
 
+void registerGitHubProvider(GitHubProvider* provider) {
+    s_githubProvider = provider;
+    s_currentProvider = provider != nullptr ? static_cast<IUpdateProvider*>(provider)
+                                            : static_cast<IUpdateProvider*>(&s_nullProvider);
+
+    if (s_initialized && s_currentProvider) {
+        s_currentProvider->begin();
+    }
+
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_githubProvider) {
+        LOG_INFO(LogTag::UPDATE, "GitHub provider registered successfully");
+    }
+#endif
+}
+
+GitHubProvider* githubProvider() {
+    return s_githubProvider;
+}
+
 // Phase 5 verifier implementations
 void registerVerifier(Verification::IVerifier* verifier) {
     s_currentVerifier = verifier;
@@ -120,66 +145,120 @@ const Installation::IInstaller* currentInstaller() {
     return s_currentInstaller;
 }
 
+// Phase 6C.1 reboot controller registration
+void registerRebootController(Reboot::RebootController* controller) {
+    s_currentRebootController = controller;
+
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_currentRebootController) {
+        LOG_INFO(LogTag::UPDATE, "Reboot controller registered successfully");
+    }
+#endif
+}
+
+bool hasRebootController() {
+    return s_currentRebootController != nullptr;
+}
+
+Reboot::RebootController* currentRebootController() {
+    return s_currentRebootController;
+}
+
+// Phase 6C.2 boot validation registration
+void registerBootValidationManager(BootValidation::BootValidationManager* manager) {
+    s_currentBootValidationManager = manager;
+
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_currentBootValidationManager) {
+        LOG_INFO(LogTag::UPDATE, "Boot validation manager registered successfully");
+    }
+#endif
+}
+
+bool hasBootValidationManager() {
+    return s_currentBootValidationManager != nullptr;
+}
+
+BootValidation::BootValidationManager* currentBootValidationManager() {
+    return s_currentBootValidationManager;
+}
+
+// Phase 6C.3 firmware acceptance registration
+void registerFirmwareAcceptanceManager(Acceptance::FirmwareAcceptanceManager* manager) {
+    s_currentFirmwareAcceptanceManager = manager;
+
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_currentFirmwareAcceptanceManager) {
+        LOG_INFO(LogTag::UPDATE, "Firmware acceptance manager registered successfully");
+    }
+#endif
+}
+
+Acceptance::FirmwareAcceptanceManager* currentFirmwareAcceptanceManager() {
+    return s_currentFirmwareAcceptanceManager;
+}
+
+// Phase 6D rollback manager registration
+void registerRollbackManager(Rollback::RollbackManager* manager) {
+    s_currentRollbackManager = manager;
+
+#ifdef OTA_PLATFORM_VALIDATION
+    if (s_currentRollbackManager) {
+        LOG_INFO(LogTag::UPDATE, "Rollback manager registered successfully");
+    }
+#endif
+}
+
+Rollback::RollbackManager* rollbackManager() {
+    return s_currentRollbackManager;
+}
+
 VersionComparison compareVersions(uint32_t currentVersionCode, uint32_t remoteVersionCode) {
     return VersionCompare::compare(currentVersionCode, remoteVersionCode);
 }
 
 UpdateDecision checkForUpdate() {
-    // First evaluate the full context to store it
-    s_lastDecisionContext = [&]() {
-        // If no update info has been set, return no update available
-        if (!s_latestUpdateInfo.isValid()) {
-            return UpdateDecisionContext::create(
-                UpdateDecisionType::NoUpdateAvailable,
-                "No valid update information available"
-            );
-        }
-        
-        // Validate the update info first
-        UpdateError validation = UpdateValidator::validateUpdateInfo(s_latestUpdateInfo);
-        if (validation.hasError()) {
-            return UpdateDecisionContext::create(
-                UpdateDecisionType::Error,
-                "Update validation failed: " + validation.message()
-            );
-        }
-        
-        // Check compatibility with current hardware/firmware
-        UpdateError compatibility = UpdateValidator::checkCompatibility(
-            s_latestUpdateInfo, 
-            s_firmwareInfo
-        );
-        if (compatibility.hasError()) {
-            return UpdateDecisionContext::create(
-                UpdateDecisionType::Error,
-                "Compatibility check failed: " + compatibility.message()
-            );
-        }
-        
-        // Compare versions to see if this is actually newer
-        VersionComparison versionCompare = UpdateValidator::compareVersion(
-            s_latestUpdateInfo, 
-            s_firmwareInfo
-        );
-        
-        if (versionCompare != VersionComparison::Newer) {
-            return UpdateDecisionContext::create(
-                UpdateDecisionType::NoUpdateAvailable,
-                "Available version is not newer than current firmware"
-            );
-        }
-        
-        // If all checks pass, the update is available
-        // In a real implementation, this could evaluate severity to return
-        // UpdateRecommended or UpdateRequired based on release metadata
-        return UpdateDecisionContext::withUpdateInfo(
-            UpdateDecisionType::UpdateAvailable,
-            "New firmware version " + s_latestUpdateInfo.version + " is available",
-            s_latestUpdateInfo
-        );
-    }();
+    s_lastDecisionContext = s_currentProvider->checkForUpdate();
+
+    if (s_lastDecisionContext.hasUpdateInfo) {
+        s_latestUpdateInfo = s_lastDecisionContext.updateInfo;
+    }
+
+    if (s_lastDecisionContext.decision != UpdateDecisionType::UpdateAvailable &&
+        s_lastDecisionContext.decision != UpdateDecisionType::UpdateRecommended &&
+        s_lastDecisionContext.decision != UpdateDecisionType::UpdateRequired) {
+        return {s_lastDecisionContext.decision};
+    }
+
+    UpdateError validation = UpdateValidator::validateUpdateInfo(s_latestUpdateInfo);
+    if (validation.hasError()) {
+        s_lastDecisionContext = UpdateDecisionContext::create(
+            UpdateDecisionType::Error,
+            "Update validation failed: " + validation.message());
+        return {s_lastDecisionContext.decision};
+    }
+
+    UpdateError compatibility = UpdateValidator::checkCompatibility(
+        s_latestUpdateInfo,
+        s_firmwareInfo);
+    if (compatibility.hasError()) {
+        s_lastDecisionContext = UpdateDecisionContext::create(
+            UpdateDecisionType::Error,
+            "Compatibility check failed: " + compatibility.message());
+        return {s_lastDecisionContext.decision};
+    }
+
+    VersionComparison versionCompare = UpdateValidator::compareVersion(
+        s_latestUpdateInfo,
+        s_firmwareInfo);
+
+    if (versionCompare != VersionComparison::Newer) {
+        s_lastDecisionContext = UpdateDecisionContext::create(
+            UpdateDecisionType::NoUpdateAvailable,
+            "Available version is not newer than current firmware");
+        return {s_lastDecisionContext.decision};
+    }
     
-    // Return just the decision type as the primary result
     return {s_lastDecisionContext.decision};
 }
 
@@ -265,6 +344,51 @@ void printUpdateStatus() {
              updateDecisionTypeToString(s_lastDecisionContext.decision));
     LOG_INFO(LogTag::UPDATE, "Decision reason: %s", 
              s_lastDecisionContext.reason.c_str());
+    if (s_currentRebootController) {
+        LOG_INFO(LogTag::UPDATE, "Reboot controller state: %d",
+                 static_cast<uint8_t>(s_currentRebootController->state()));
+        LOG_INFO(LogTag::UPDATE, "Reboot pending: %s",
+                 s_currentRebootController->hasPendingReboot() ? "Yes" : "No");
+    }
+
+    if (s_githubProvider) {
+        const auto& diagnostics = s_githubProvider->diagnostics();
+        LOG_INFO(LogTag::UPDATE, "GitHub provider state: %d",
+                 static_cast<uint8_t>(s_githubProvider->state()));
+        LOG_INFO(LogTag::UPDATE, "GitHub HTTP status: %d",
+                 diagnostics.lastHttpStatus);
+        LOG_INFO(LogTag::UPDATE, "GitHub retry count: %d",
+                 diagnostics.retryCount);
+        LOG_INFO(LogTag::UPDATE, "GitHub request duration: %u ms",
+                 diagnostics.requestDurationMs);
+    }
+    if (s_currentBootValidationManager) {
+        const auto& bootReport = s_currentBootValidationManager->report();
+        LOG_INFO(LogTag::UPDATE, "Boot validation state: %d",
+                 static_cast<uint8_t>(s_currentBootValidationManager->state()));
+        LOG_INFO(LogTag::UPDATE, "Boot validation result: %d",
+                 static_cast<uint8_t>(bootReport.result));
+    }
+    if (s_currentFirmwareAcceptanceManager) {
+        const auto& acceptanceReport = s_currentFirmwareAcceptanceManager->report();
+        LOG_INFO(LogTag::UPDATE, "Firmware acceptance state: %d",
+                 static_cast<uint8_t>(s_currentFirmwareAcceptanceManager->state()));
+        LOG_INFO(LogTag::UPDATE, "Firmware acceptance result: %d",
+                 static_cast<uint8_t>(acceptanceReport.result));
+    }
+    if (s_currentRollbackManager) {
+        const auto& rollbackReport = s_currentRollbackManager->report();
+        LOG_INFO(LogTag::UPDATE, "Rollback state: %d",
+                 static_cast<uint8_t>(s_currentRollbackManager->state()));
+        LOG_INFO(LogTag::UPDATE, "Rollback result: %d",
+                 static_cast<uint8_t>(rollbackReport.result));
+        LOG_INFO(LogTag::UPDATE, "Rollback reason: %d",
+                 static_cast<uint8_t>(rollbackReport.reason));
+        LOG_INFO(LogTag::UPDATE, "Rollback possible/required/executed: %d/%d/%d",
+                 rollbackReport.rollbackPossible,
+                 rollbackReport.rollbackRequired,
+                 rollbackReport.rollbackExecuted);
+    }
     LOG_INFO(LogTag::UPDATE, "=====================================");
 #endif
 }

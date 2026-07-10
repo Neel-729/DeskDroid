@@ -9,7 +9,8 @@ namespace Installation {
 OtaInstaller::OtaInstaller()
     : _currentState(InstallationState::Idle)
     , _lastError(InstallationError::None)
-    , _isInitialized(false) {
+    , _isInitialized(false)
+    , _activationCompleted(false) {
     clearInternalState();
 }
 
@@ -507,8 +508,9 @@ InstallationResult OtaInstaller::finalizeInstallation() {
     // Only mark session as inactive, diagnostics remain available
     _activeSession.isActive = false;
     
-    // cleanupOtaSession() will see SessionClosed and SKIP esp_ota_abort() - this is CRITICAL
-    cleanupOtaSession();
+    // Preserve the closed-session target partition for explicit activation.
+    // No cleanup call is needed here because esp_ota_end() has already closed
+    // the OTA transaction and the handle has been invalidated.
 
     // Populate successful result - NO boot partition changes (handled in Phase 6B.4)
     result.status = InstallationStatus::Success;
@@ -526,6 +528,207 @@ InstallationResult OtaInstaller::finalizeInstallation() {
     #endif
 
     validateProgressInvariants();
+    return result;
+}
+
+ActivationResult OtaInstaller::activateInstalledFirmware() {
+    ActivationResult result = {};
+    result.success = false;
+    result.error = InstallationError::None;
+    result.message = "";
+    result.rebootRequired = false;
+    result.bootPartitionChanged = false;
+    result.activationTimestampMs = 0;
+
+    const uint32_t remainingBytes = _currentProgress.totalBytes - _currentProgress.bytesWritten;
+    const uint8_t percentage = _currentProgress.percentage();
+    const bool otaHandleInvalid = _activeSession.otaHandle._otaHandle == 0;
+    const esp_partition_t* targetPartition = nullptr;
+
+    #ifdef OTA_PLATFORM_VALIDATION
+    printf("[OtaInstaller] Entering activation\n");
+    printf("[OtaInstaller] Installer state: %s\n", stateToString(_currentState));
+    printf("[OtaInstaller] Session state: %d\n", static_cast<int>(_activeSession.otaHandle._sessionState));
+    printf("[OtaInstaller] OTA handle invalid: %d\n", otaHandleInvalid);
+    printf("[OtaInstaller] Active installation session: %d\n", _activeSession.isActive);
+    printf("[OtaInstaller] bytesWritten=%u, totalBytes=%u, remaining=%u, percentage=%u, writeCount=%u\n",
+           _currentProgress.bytesWritten, _currentProgress.totalBytes,
+           remainingBytes, percentage, _activeSession.chunksWritten);
+    if (_currentState != InstallationState::Completed) {
+        printf("[OTA][INVARIANT] Activation requires installer state Completed\n");
+    }
+    if (_activeSession.otaHandle._sessionState != OtaSessionState::SessionClosed) {
+        printf("[OTA][INVARIANT] Activation requires OTA session SessionClosed\n");
+    }
+    if (!otaHandleInvalid) {
+        printf("[OTA][INVARIANT] Activation requires invalid OTA handle\n");
+    }
+    if (_activeSession.isActive) {
+        printf("[OTA][INVARIANT] Activation requires no active installation session\n");
+    }
+    if (_currentProgress.bytesWritten != _currentProgress.totalBytes) {
+        printf("[OTA][INVARIANT] Activation requires bytesWritten == totalBytes\n");
+    }
+    if (remainingBytes != 0) {
+        printf("[OTA][INVARIANT] Activation requires remainingBytes == 0\n");
+    }
+    if (percentage != 100) {
+        printf("[OTA][INVARIANT] Activation requires percentage == 100\n");
+    }
+    if (_activeSession.chunksWritten == 0) {
+        printf("[OTA][INVARIANT] Activation requires writeCount > 0\n");
+    }
+    #endif
+
+    if (_activationCompleted) {
+        result.error = InstallationError::InvalidState;
+        result.message = "Installed firmware has already been activated";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    if (_currentState != InstallationState::Completed) {
+        result.error = InstallationError::InvalidState;
+        result.message = "Activation requires Completed installer state";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    if (_activeSession.otaHandle._sessionState != OtaSessionState::SessionClosed) {
+        result.error = InstallationError::InvalidState;
+        result.message = "Activation requires a closed OTA session";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    if (!otaHandleInvalid) {
+        result.error = InstallationError::InvalidState;
+        result.message = "Activation requires an invalid OTA handle";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    if (_activeSession.isActive) {
+        result.error = InstallationError::Busy;
+        result.message = "Activation requires no active installation session";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    if (_currentProgress.bytesWritten != _currentProgress.totalBytes ||
+        remainingBytes != 0 ||
+        percentage != 100 ||
+        _activeSession.chunksWritten == 0) {
+        result.error = InstallationError::InvalidState;
+        result.message = "Activation progress invariants failed";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    const esp_partition_t* runningPartition = esp_ota_get_running_partition();
+    const esp_partition_t* bootPartitionBefore = esp_ota_get_boot_partition();
+    targetPartition = reinterpret_cast<const esp_partition_t*>(_activeSession.otaHandle._partition);
+
+    #ifdef OTA_PLATFORM_VALIDATION
+    printf("[OtaInstaller] Running partition: %s (%p)\n",
+           runningPartition != nullptr ? runningPartition->label : "nullptr",
+           reinterpret_cast<const void*>(runningPartition));
+    printf("[OtaInstaller] Current boot partition: %s (%p)\n",
+           bootPartitionBefore != nullptr ? bootPartitionBefore->label : "nullptr",
+           reinterpret_cast<const void*>(bootPartitionBefore));
+    printf("[OtaInstaller] Target partition: %s (%p)\n",
+           targetPartition != nullptr ? targetPartition->label : "nullptr",
+           reinterpret_cast<const void*>(targetPartition));
+    if (targetPartition == nullptr) {
+        printf("[OTA][INVARIANT] Activation requires targetPartition != nullptr\n");
+    }
+    #endif
+
+    if (targetPartition == nullptr) {
+        result.error = InstallationError::PartitionUnavailable;
+        result.message = "No target partition stored for activation";
+        setError(result.error, result.message);
+        return result;
+    }
+
+    if (runningPartition != nullptr &&
+        (targetPartition == runningPartition || targetPartition->address == runningPartition->address)) {
+        result.error = InstallationError::PartitionUnavailable;
+        result.message = "Target partition matches running partition";
+        setError(result.error, result.message);
+        #ifdef OTA_PLATFORM_VALIDATION
+        printf("[OTA][INVARIANT] targetPartition must not equal runningPartition\n");
+        #endif
+        return result;
+    }
+
+    #ifdef OTA_PLATFORM_VALIDATION
+    printf("[OtaInstaller] Calling esp_ota_set_boot_partition()\n");
+    #endif
+
+    esp_err_t err = esp_ota_set_boot_partition(targetPartition);
+
+    #ifdef OTA_PLATFORM_VALIDATION
+    printf("[OtaInstaller] ESP-IDF return code: %s (0x%x)\n", esp_err_to_name(err), err);
+    #endif
+
+    if (err != ESP_OK) {
+        result.error = InstallationError::InternalError;
+        result.message = "esp_ota_set_boot_partition() failed";
+        setError(result.error, result.message);
+        transitionTo(InstallationState::Error);
+        return result;
+    }
+
+    const esp_partition_t* bootPartitionAfter = esp_ota_get_boot_partition();
+    const bool bootMatchesTarget =
+        bootPartitionAfter != nullptr &&
+        (bootPartitionAfter == targetPartition || bootPartitionAfter->address == targetPartition->address);
+    const bool bootChanged =
+        bootPartitionBefore != bootPartitionAfter &&
+        (bootPartitionBefore == nullptr || bootPartitionAfter == nullptr ||
+         bootPartitionBefore->address != bootPartitionAfter->address);
+
+    #ifdef OTA_PLATFORM_VALIDATION
+    printf("[OtaInstaller] Boot partition after activation: %s (%p)\n",
+           bootPartitionAfter != nullptr ? bootPartitionAfter->label : "nullptr",
+           reinterpret_cast<const void*>(bootPartitionAfter));
+    if (!bootMatchesTarget) {
+        printf("[OTA][INVARIANT] bootPartition must equal targetPartition after activation\n");
+    }
+    if (!bootChanged) {
+        printf("[OTA][INVARIANT] bootPartition did not change during activation\n");
+    }
+    #endif
+
+    if (!bootMatchesTarget || !bootChanged) {
+        result.error = InstallationError::InternalError;
+        result.message = "Boot partition verification failed after activation";
+        setError(result.error, result.message);
+        transitionTo(InstallationState::Error);
+        return result;
+    }
+
+    _activationCompleted = true;
+    result.success = true;
+    result.error = InstallationError::None;
+    result.message = "Activation succeeded; reboot required to run installed firmware";
+    result.rebootRequired = true;
+    result.bootPartitionChanged = true;
+    result.activationTimestampMs = millis();
+
+    #ifdef OTA_PLATFORM_VALIDATION
+    printf("[OtaInstaller] ActivationResult success=%d error=%s message=%s bootPartitionChanged=%d\n",
+           result.success, errorToString(result.error), result.message, result.bootPartitionChanged);
+    printf("[OtaInstaller] RebootRequired=%d\n", result.rebootRequired);
+    printf("[OtaInstaller] Timestamp=%llu\n",
+           static_cast<unsigned long long>(result.activationTimestampMs));
+    if (_currentState != InstallationState::Completed) {
+        printf("[OTA][INVARIANT] Installer should remain Completed after successful activation\n");
+    }
+    validateProgressInvariants();
+    #endif
+
     return result;
 }
 
@@ -700,6 +903,7 @@ void OtaInstaller::cleanupOtaSession() {
 
 void OtaInstaller::clearInternalState() {
     _lastError = InstallationError::None;
+    _activationCompleted = false;
     
     // Clean up any active OTA session first
     cleanupOtaSession();

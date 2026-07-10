@@ -10,6 +10,10 @@ public:
     void loop() override;
     bool available() const override;
     const char* providerName() const override;
+    UpdateDecisionContext checkForUpdate() override;
+    const UpdateInfo& latestUpdateInfo() const override;
+    const UpdateError& lastError() const override;
+    void reset() override;
     
     /**
      * @brief Get the update decision from the null provider
@@ -28,4 +32,5 @@ public:
 
 private:
     UpdateInfo m_dummyUpdateInfo; ///< Dummy update info for realistic API compliance
+    UpdateError m_lastError;
 };
