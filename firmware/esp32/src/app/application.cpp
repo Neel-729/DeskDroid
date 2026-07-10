@@ -31,10 +31,12 @@
 #include "../services/services.h"
 #include "../services/timer_service.h"
 #include "../ui/screens.h"
+#include "../include/version.h"
+
 
 namespace {
 
-constexpr const char* FIRMWARE_VERSION = "2.6.8";
+constexpr const char* FIRMWARE_VERSION = FIRMWARE_VERSION_STRING;
 
 SystemContext systemContext;
 

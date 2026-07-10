@@ -1,22 +1,23 @@
 #pragma once
 
-namespace Version {
+#include <stdint.h>
 
-// Product Information
-constexpr const char* FirmwareName        = "DeskDroid";
-constexpr const char* FirmwareVersion     = "2.6.8";
-constexpr const char* FirmwareChannel     = "Development";   // Development, Beta, Stable
+// Canonical firmware version definition - single source of truth
+#define FIRMWARE_VERSION_MAJOR 2
+#define FIRMWARE_VERSION_MINOR 8
+#define FIRMWARE_VERSION_PATCH 1
 
-// Build Information
-constexpr const char* BuildDate           = __DATE__;
-constexpr const char* BuildTime           = __TIME__;
+// Helper macros for string conversion
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
 
-// Hardware Compatibility
-constexpr const char* HardwareRevision    = "Rev A";
-constexpr const char* ProtocolVersion     = "1.0";
+// String representation of the semantic version
+#define FIRMWARE_VERSION_STRING TOSTRING(FIRMWARE_VERSION_MAJOR) "." TOSTRING(FIRMWARE_VERSION_MINOR) "." TOSTRING(FIRMWARE_VERSION_PATCH)
 
-// OTA Information
-constexpr bool OTAEnabled                 = true;
-constexpr const char* FirmwareVersionCode    = "20608";   // 2.6.8 -> 20608
+// Calculate deterministic version code: major * 10000 + minor * 100 + patch
+// This allows for up to 99 major, 99 minor, 99 patch versions
+#define FIRMWARE_VERSION_CODE (FIRMWARE_VERSION_MAJOR * 10000 + FIRMWARE_VERSION_MINOR * 100 + FIRMWARE_VERSION_PATCH)
 
-}
+// Hardware and protocol versions (can be moved to build config if needed)
+#define HARDWARE_REVISION "1.0"
+#define PROTOCOL_VERSION 1
