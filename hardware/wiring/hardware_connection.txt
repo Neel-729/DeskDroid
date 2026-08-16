@@ -2,7 +2,7 @@ ESP32
 
 | GPIO | Function          |
 | ---- | ----------------- |
-| 4    | Buzzer            |
+| 23   | Buzzer            |
 | 5    | Encoder SW        |
 | 16   | UART RX (ESP8266) |
 | 17   | UART TX (ESP8266) |
@@ -10,8 +10,8 @@ ESP32
 | 19   | Encoder CLK       |
 | 21   | LCD + RTC SDA     |
 | 22   | LCD + RTC SCL     |
-| 23   | TTP229 SCL        |
-| 36   | TTP229 SDO        |
+| 32   | TTP229 SCL        |
+| 35   | TTP229 SDO        |
 
 
 ESP8266
@@ -25,5 +25,3 @@ ESP8266
 | D6   | Relay 4           |
 
 
-
-refractor settings flow

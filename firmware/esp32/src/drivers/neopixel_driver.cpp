@@ -1,12 +1,11 @@
 #include "neopixel_driver.h"
+#include "../../include/config.h"
+#include "../../include/pins.h"
 
 #include <Adafruit_NeoPixel.h>
 
 namespace {
-constexpr uint8_t LED_PIN = 13;
-constexpr uint16_t LED_COUNT = 83;
-
-Adafruit_NeoPixel pixels(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel pixels(Config::NeoPixelCount, Pins::NeoPixelData, NEO_GRB + NEO_KHZ800);
 LedState currentLedState = LED_IDLE;
 LedIdlePreset idlePreset = IDLE_STATIC;
 uint8_t ledBrightness = 5;
@@ -92,8 +91,8 @@ void update(bool lightsAllowed){
           static uint16_t hue = 0;
           hue += 256;
 
-          for(int i=0;i<LED_COUNT;i++){
-            pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(hue + (i * 65536L / LED_COUNT))));
+          for(int i=0;i<Config::NeoPixelCount;i++){
+            pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(hue + (i * 65536L / Config::NeoPixelCount))));
           }
           break;
         }

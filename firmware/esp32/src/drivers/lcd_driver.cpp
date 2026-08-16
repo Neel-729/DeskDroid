@@ -5,7 +5,8 @@
 #include <string.h>
 
 namespace {
-LiquidCrystal_I2C lcd(0x27,16,2);
+constexpr uint8_t LCD_I2C_ADDRESS = 0x27;
+LiquidCrystal_I2C lcd(LCD_I2C_ADDRESS,16,2);
 char displayedRows[2][17] = {
   "                ",
   "                "
@@ -115,12 +116,30 @@ void writeRowInternal(uint8_t row, const char* text){
     }
 
     runs++;
+    // First set the cursor position using library's safe method
     timedSetCursor(runStart, row);
+    // Now batch write all characters in a single I2C transaction with correct 4-bit protocol
+    const uint32_t batchStartUs = micros();
+    Wire.beginTransmission(LCD_I2C_ADDRESS);
     for(uint8_t i = runStart; i < col; ++i){
-      timedWrite(static_cast<uint8_t>(target[i]));
+      const uint8_t c = static_cast<uint8_t>(target[i]);
+      // Send high nibble first (4-bit mode requirement for HD44780)
+      uint8_t highNibble = (c & 0xF0) | 0x09; // RS=1 (data), BL=1 (backlight on)
+      uint8_t lowNibble = ((c << 4) & 0xF0) | 0x09;
+      // Toggle EN high to latch high nibble
+      Wire.write(highNibble | 0x04); // EN=1
+      Wire.write(highNibble); // EN=0
+      // Toggle EN high to latch low nibble
+      Wire.write(lowNibble | 0x04); // EN=1
+      Wire.write(lowNibble); // EN=0
       displayedRows[row][i] = target[i];
       changedChars++;
     }
+    Wire.endTransmission();
+    const uint32_t batchRuntimeUs = micros() - batchStartUs;
+    lcdTimingStats.writeUs += batchRuntimeUs;
+    lcdTimingStats.writeCount++;
+    updateMax(lcdTimingStats.maxWriteUs, batchRuntimeUs);
   }
 
   displayedRows[row][16] = '\0';
@@ -160,7 +179,7 @@ namespace LcdDriver {
 
 void begin(){
   Wire.begin(21,22);
-  Wire.setClock(100000);
+  Wire.setClock(400000);
   Wire.setTimeOut(50);
   lcd.init();
   lcd.backlight();

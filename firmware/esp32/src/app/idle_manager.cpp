@@ -8,6 +8,7 @@ namespace {
 unsigned long lastActivityTime = 0;
 IdleManager::IdleTimeout currentTimeout = IdleManager::IdleTimeout::THIRTY_SECONDS;
 bool idleReturnBlocked = false;
+bool timeoutFired = false;  // Latch flag to ensure timeout is only signaled/logged once
 
 // Visual feedback timing (show countdown 3 seconds before return)
 constexpr unsigned long FEEDBACK_LEAD_TIME_MS = 3000;
@@ -21,6 +22,7 @@ void begin() {
   lastActivityTime = millis();
   currentTimeout = IdleTimeout::THIRTY_SECONDS;
   idleReturnBlocked = false;
+  timeoutFired = false;  // Reset latch on initialization
   LOG_INFO(LogTag::APP, "[IDLE] Manager initialized, timeout=%u seconds", 
            (uint16_t)currentTimeout);
 }
@@ -39,11 +41,12 @@ bool update(unsigned long now) {
   uint16_t timeoutMs = (uint16_t)currentTimeout * 1000;
   unsigned long idleDurationMs = now - lastActivityTime;
   
-  // Check if idle timeout exceeded
-  if (idleDurationMs >= timeoutMs) {
+  // Only signal/log timeout once per inactivity period (latch behavior)
+  if (idleDurationMs >= timeoutMs && !timeoutFired) {
+    timeoutFired = true;  // Latch the flag to prevent repeated calls
     LOG_INFO(LogTag::APP, "[IDLE] Idle timeout reached (%lums >= %ums)", 
              idleDurationMs, timeoutMs);
-    return true;  // Signal auto-return
+    return true;  // Signal auto-return exactly once
   }
   
   return false;
@@ -51,6 +54,7 @@ bool update(unsigned long now) {
 
 void notifyActivity(unsigned long now) {
   lastActivityTime = now;
+  timeoutFired = false;  // Reset latch when user activity is detected
 }
 
 bool isIdle(unsigned long now) {

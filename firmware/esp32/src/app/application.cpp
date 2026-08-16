@@ -2,6 +2,7 @@
 
 #include <esp_system.h>
 #include <Arduino.h>
+#include "../macro_keys.h"
 
 #include "application_commands.h"
 #include "hardware_requests.h"
@@ -52,6 +53,7 @@ void runInputTask(FrameContext &context);
 void runEventTask(FrameContext &context);
 void runUiTask(FrameContext &context);
 void runDiagnosticsTask(FrameContext &context);
+
 void monitorLongPressHome(unsigned long now);
 void flushUiFrame();
 bool flushUiFrame(bool force);
@@ -178,6 +180,7 @@ void initHardware(){
 
   Services::begin(SettingsFlow::settings());
   InputService::begin();
+  MacroKeys::begin();
   HardwareRequests::requestBacklight(SystemStateStore::current().lighting.backlightEnabled, CommandSource::SYSTEM);
   HardwareRequests::executePending();
 
@@ -742,6 +745,10 @@ void runNavMonitorTask(FrameContext &context){
 
 void runInputTask(FrameContext &context){
   (void)context;
+  // Process macro keys (TTP229-BSF touch controller)
+  MacroKeys::update();
+  
+  // Process existing encoder input
   EventType inputEvent=InputService::readEvent();
   if(inputEvent!=EVENT_NONE){
     int8_t direction = 0;
@@ -898,180 +905,219 @@ void runUiTask(FrameContext &context){
 }
 
 void runDiagnosticsTask(FrameContext &context){
+  static uint8_t logStage = 0; // Track which log line to print next (0 = idle, 1-6 = print specific logs)
   static uint32_t lastLedPerfMs = 0;
   static uint32_t lastLedPerfTx = 0;
   static uint32_t lastLedPerfAck = 0;
   static uint32_t lastLedPerfRetry = 0;
   static uint32_t lastLedPerfUartTxBytes = 0;
-
-  const SchedulerStats &schedulerStats = scheduler.stats();
-  const HardwareRequestStats &hardwareStats = HardwareRequests::stats();
-  const EventQueueStats &eventStats = eventQueueStats();
-  const FaultSnapshot &faults = FaultTracker::snapshot();
-  const FaultRecord &lastFault = faults.lastFault;
-  const Esp8266LinkDiagnostics &link = Esp8266Link::diagnostics();
-  const UartMonitorStats &uart = UartTrafficMonitor::stats();
-  const uint32_t ledPerfElapsedMs = lastLedPerfMs == 0 ? 0 : context.nowMs - lastLedPerfMs;
-  const uint32_t ledTxDelta = link.ledTx - lastLedPerfTx;
-  const uint32_t ledAckDelta = link.ledAck - lastLedPerfAck;
-  const uint32_t ledRetryDelta = link.ledRetry - lastLedPerfRetry;
-  const uint32_t uartTxByteDelta = uart.txBytes - lastLedPerfUartTxBytes;
-  const uint32_t ledTxPerMinute =
-    ledPerfElapsedMs == 0 ? 0 : (uint32_t)(((uint64_t)ledTxDelta * 60000ULL) / ledPerfElapsedMs);
-  const uint32_t uartTxBytesPerMinute =
-    ledPerfElapsedMs == 0 ? 0 : (uint32_t)(((uint64_t)uartTxByteDelta * 60000ULL) / ledPerfElapsedMs);
-
-  lastLedPerfMs = context.nowMs;
-  lastLedPerfTx = link.ledTx;
-  lastLedPerfAck = link.ledAck;
-  lastLedPerfRetry = link.ledRetry;
-  lastLedPerfUartTxBytes = uart.txBytes;
-
-  LOG_INFO(
-    LogTag::APP,
-    "sched loops=%lu tasks=%lu events q=%lu d=%lu drop=%u max=%u seq=%u hw q=%lu x=%lu drop=%u max=%u seq=%u age=%lums",
-    (unsigned long)schedulerStats.loopCount,
-    (unsigned long)schedulerStats.taskRunCount,
-    (unsigned long)eventStats.queued,
-    (unsigned long)eventStats.dequeued,
-    eventStats.dropped,
-    eventStats.maxDepth,
-    eventStats.lastSequenceId,
-    (unsigned long)hardwareStats.queued,
-    (unsigned long)hardwareStats.executed,
-    hardwareStats.dropped,
-    hardwareStats.maxDepth,
-    hardwareStats.lastSequenceId,
-    (unsigned long)hardwareStats.maxCommandAgeMs
-  );
-
-  LOG_INFO(
-    LogTag::APP,
-    "OVERRUN count=%lu task=%s runtime=%luus budget=%luus excess=%luus at=%lums maxLoopActual=%luus",
-    (unsigned long)schedulerStats.overrunCount,
-    schedulerStats.lastOverrunTaskName != nullptr ? schedulerStats.lastOverrunTaskName : "none",
-    (unsigned long)schedulerStats.lastOverrunRuntimeUs,
-    (unsigned long)schedulerStats.lastOverrunBudgetUs,
-    (unsigned long)schedulerStats.lastOverrunExcessUs,
-    (unsigned long)schedulerStats.lastOverrunTimestampMs,
-    (unsigned long)schedulerStats.maxLoopRuntimeUs
-  );
-
-  const LcdDriver::TimingStats &lcdTiming = LcdDriver::timingStats();
-  LOG_INFO(
-    LogTag::APP,
-    "LCD_TIMING clear=%luus row1=%luus row2=%luus frame=%luus setCursor=%luus print=%luus write=%luus maxFrame=%luus ops clear=%lu frame=%lu cursor=%u print=%u write=%u chars=%u rows=%u skipped=%u runs=%u/%u",
-    (unsigned long)lcdTiming.clearUs,
-    (unsigned long)lcdTiming.row1Us,
-    (unsigned long)lcdTiming.row2Us,
-    (unsigned long)lcdTiming.frameUs,
-    (unsigned long)lcdTiming.setCursorUs,
-    (unsigned long)lcdTiming.printUs,
-    (unsigned long)lcdTiming.writeUs,
-    (unsigned long)lcdTiming.maxFrameUs,
-    (unsigned long)lcdTiming.clearCount,
-    (unsigned long)lcdTiming.frameUpdateCount,
-    (unsigned)lcdTiming.lastFrameSetCursorOps,
-    (unsigned)lcdTiming.lastFramePrintOps,
-    (unsigned)lcdTiming.lastFrameWriteOps,
-    (unsigned)lcdTiming.lastFrameChangedChars,
-    (unsigned)lcdTiming.lastFrameRowsChanged,
-    (unsigned)lcdTiming.lastFrameRowsSkipped,
-    (unsigned)lcdTiming.lastRow1Runs,
-    (unsigned)lcdTiming.lastRow2Runs
-  );
-
-  LOG_INFO(
-    LogTag::APP,
-    "UI_TIMING frame=%luus max=%luus decision=%luus data=%luus menu=%luus text=%luus icon=%luus animation=%luus display=%luus spi=%luus built=%lu flushed=%lu skipped=%lu unchanged=%lu full=%lu unnecessary=%lu",
-    (unsigned long)uiTiming.frameUs,
-    (unsigned long)uiTiming.maxFrameUs,
-    (unsigned long)uiTiming.decisionUs,
-    (unsigned long)uiTiming.dataUs,
-    (unsigned long)uiTiming.menuDrawingUs,
-    (unsigned long)uiTiming.textRenderingUs,
-    (unsigned long)uiTiming.iconRenderingUs,
-    (unsigned long)uiTiming.animationRenderingUs,
-    (unsigned long)uiTiming.displayRenderingUs,
-    (unsigned long)uiTiming.spiTransferUs,
-    (unsigned long)uiTiming.framesBuilt,
-    (unsigned long)uiTiming.framesFlushed,
-    (unsigned long)uiTiming.framesSkipped,
-    (unsigned long)uiTiming.unchangedFrames,
-    (unsigned long)uiTiming.fullScreenRedraws,
-    (unsigned long)uiTiming.unnecessaryRedraws
-  );
-
-  LOG_INFO(
-    LogTag::APP,
-    "LED_STATE desired=%s/%u/%u/%u active=%s/%u/%u/%u sent=%s/%u/%u/%u pending=%s/%u/%u/%u status=%s retry=%u ackAge=%lums err=%s counts tx=%lu ack=%lu retry=%lu dupIgnored=%lu",
-    link.desiredLedMode,
-    link.desiredLedPower ? 1 : 0,
-    link.desiredLedBrightness,
-    link.desiredLedSpeed,
-    link.activeLedMode,
-    link.activeLedPower ? 1 : 0,
-    link.activeLedBrightness,
-    link.activeLedSpeed,
-    link.lastSentLedMode,
-    link.lastSentLedPower ? 1 : 0,
-    link.lastSentLedBrightness,
-    link.lastSentLedSpeed,
-    link.pendingLedMode,
-    link.pendingLedPower ? 1 : 0,
-    link.pendingLedBrightness,
-    link.pendingLedSpeed,
-    Esp8266Link::ledStatusName(link.ledStatus),
-    link.ledRetryCount,
-    link.lastLedAckMs == 0 ? 0UL : (unsigned long)(context.nowMs - link.lastLedAckMs),
-    link.lastLedErrReason,
-    (unsigned long)link.ledTx,
-    (unsigned long)link.ledAck,
-    (unsigned long)link.ledRetry,
-    (unsigned long)link.ledDuplicateIgnored
-  );
-
-  LOG_INFO(
-    LogTag::APP,
-    "LED_PERF interval=%lums txDelta=%lu ackDelta=%lu retryDelta=%lu txRate=%lu/min uartTxBytesDelta=%lu uartTxBytesRate=%lu/min",
-    (unsigned long)ledPerfElapsedMs,
-    (unsigned long)ledTxDelta,
-    (unsigned long)ledAckDelta,
-    (unsigned long)ledRetryDelta,
-    (unsigned long)ledTxPerMinute,
-    (unsigned long)uartTxByteDelta,
-    (unsigned long)uartTxBytesPerMinute
-  );
-
-  logTaskRuntimeProfiles();
-  logOverrunAttributionSummary();
-
-  LOG_INFO(
-    LogTag::APP,
-    "fault state=%s retry=%u recover=%u reset=%u syncReason=%s last=%s/%s repeat=%u reason=%s counters link=%lu proto=%lu sched=%lu hw=%lu drv=%lu uart tx=%lu/%luB rx=%lu/%luB crc=%lu to=%lu resync=%lu malformed=%lu",
-    Esp8266Link::stateName(link.state),
-    link.retryCount,
-    link.recoveryAttemptCount,
-    link.transportResetCount,
-    link.lastSyncReason,
-    FaultTracker::sourceName(lastFault.source),
-    FaultTracker::codeName(lastFault.code),
-    lastFault.repeatCount,
-    link.lastRecoveryReason,
-    (unsigned long)faults.counters.link,
-    (unsigned long)faults.counters.protocol,
-    (unsigned long)faults.counters.schedulerOverrun,
-    (unsigned long)faults.counters.hardwareRequest,
-    (unsigned long)faults.counters.driver,
-    (unsigned long)uart.txPackets,
-    (unsigned long)uart.txBytes,
-    (unsigned long)uart.rxPackets,
-    (unsigned long)uart.rxBytes,
-    (unsigned long)uart.crcErrors,
-    (unsigned long)uart.timeoutErrors,
-    (unsigned long)uart.resyncCount,
-    (unsigned long)uart.malformedPackets
-  );
+  
+  // If we're in the middle of printing logs, only print one line per task invocation
+  if(logStage > 0) {
+    // Capture all diagnostics data first (only once per full log cycle)
+    const SchedulerStats &schedulerStats = scheduler.stats();
+    const HardwareRequestStats &hardwareStats = HardwareRequests::stats();
+    const EventQueueStats &eventStats = eventQueueStats();
+    const FaultSnapshot &faults = FaultTracker::snapshot();
+    const FaultRecord &lastFault = faults.lastFault;
+    const Esp8266LinkDiagnostics &link = Esp8266Link::diagnostics();
+    const UartMonitorStats &uart = UartTrafficMonitor::stats();
+    const uint32_t ledPerfElapsedMs = lastLedPerfMs == 0 ? 0 : context.nowMs - lastLedPerfMs;
+    const uint32_t ledTxDelta = link.ledTx - lastLedPerfTx;
+    const uint32_t ledAckDelta = link.ledAck - lastLedPerfAck;
+    const uint32_t ledRetryDelta = link.ledRetry - lastLedPerfRetry;
+    const uint32_t uartTxByteDelta = uart.txBytes - lastLedPerfUartTxBytes;
+    const uint32_t ledTxPerMinute =
+      ledPerfElapsedMs == 0 ? 0 : (uint32_t)(((uint64_t)ledTxDelta * 60000ULL) / ledPerfElapsedMs);
+    const uint32_t uartTxBytesPerMinute =
+      ledPerfElapsedMs == 0 ? 0 : (uint32_t)(((uint64_t)uartTxByteDelta * 60000ULL) / ledPerfElapsedMs);
+    const LcdDriver::TimingStats &lcdTiming = LcdDriver::timingStats();
+    
+    // Print one log line per task invocation to stay under 4ms budget
+    switch(logStage) {
+      case 1:
+        LOG_INFO(
+          LogTag::APP,
+          "sched loops=%lu tasks=%lu events q=%lu d=%lu drop=%u max=%u seq=%u hw q=%lu x=%lu drop=%u max=%u seq=%u age=%lums",
+          (unsigned long)schedulerStats.loopCount,
+          (unsigned long)schedulerStats.taskRunCount,
+          (unsigned long)eventStats.queued,
+          (unsigned long)eventStats.dequeued,
+          eventStats.dropped,
+          eventStats.maxDepth,
+          eventStats.lastSequenceId,
+          (unsigned long)hardwareStats.queued,
+          (unsigned long)hardwareStats.executed,
+          hardwareStats.dropped,
+          hardwareStats.maxDepth,
+          hardwareStats.lastSequenceId,
+          (unsigned long)hardwareStats.maxCommandAgeMs
+        );
+        logStage = 2;
+        return;
+      case 2:
+        LOG_INFO(
+          LogTag::APP,
+          "OVERRUN count=%lu task=%s runtime=%luus budget=%luus excess=%luus at=%lums maxLoopActual=%luus",
+          (unsigned long)schedulerStats.overrunCount,
+          schedulerStats.lastOverrunTaskName != nullptr ? schedulerStats.lastOverrunTaskName : "none",
+          (unsigned long)schedulerStats.lastOverrunRuntimeUs,
+          (unsigned long)schedulerStats.lastOverrunBudgetUs,
+          (unsigned long)schedulerStats.lastOverrunExcessUs,
+          (unsigned long)schedulerStats.lastOverrunTimestampMs,
+          (unsigned long)schedulerStats.maxLoopRuntimeUs
+        );
+        logStage = 3;
+        return;
+      case 3:
+        LOG_INFO(
+          LogTag::APP,
+          "LCD_TIMING clear=%luus row1=%luus row2=%luus frame=%luus setCursor=%luus print=%luus write=%luus maxFrame=%luus ops clear=%lu frame=%lu cursor=%u print=%u write=%u chars=%u rows=%u skipped=%u runs=%u/%u",
+          (unsigned long)lcdTiming.clearUs,
+          (unsigned long)lcdTiming.row1Us,
+          (unsigned long)lcdTiming.row2Us,
+          (unsigned long)lcdTiming.frameUs,
+          (unsigned long)lcdTiming.setCursorUs,
+          (unsigned long)lcdTiming.printUs,
+          (unsigned long)lcdTiming.writeUs,
+          (unsigned long)lcdTiming.maxFrameUs,
+          (unsigned long)lcdTiming.clearCount,
+          (unsigned long)lcdTiming.frameUpdateCount,
+          (unsigned)lcdTiming.lastFrameSetCursorOps,
+          (unsigned)lcdTiming.lastFramePrintOps,
+          (unsigned)lcdTiming.lastFrameWriteOps,
+          (unsigned)lcdTiming.lastFrameChangedChars,
+          (unsigned)lcdTiming.lastFrameRowsChanged,
+          (unsigned)lcdTiming.lastFrameRowsSkipped,
+          (unsigned)lcdTiming.lastRow1Runs,
+          (unsigned)lcdTiming.lastRow2Runs
+        );
+        logStage = 4;
+        return;
+      case 4:
+        LOG_INFO(
+          LogTag::APP,
+          "UI_TIMING frame=%luus max=%luus decision=%luus data=%luus menu=%luus text=%luus icon=%luus animation=%luus display=%luus spi=%luus built=%lu flushed=%lu skipped=%lu unchanged=%lu full=%lu unnecessary=%lu",
+          (unsigned long)uiTiming.frameUs,
+          (unsigned long)uiTiming.maxFrameUs,
+          (unsigned long)uiTiming.decisionUs,
+          (unsigned long)uiTiming.dataUs,
+          (unsigned long)uiTiming.menuDrawingUs,
+          (unsigned long)uiTiming.textRenderingUs,
+          (unsigned long)uiTiming.iconRenderingUs,
+          (unsigned long)uiTiming.animationRenderingUs,
+          (unsigned long)uiTiming.displayRenderingUs,
+          (unsigned long)uiTiming.spiTransferUs,
+          (unsigned long)uiTiming.framesBuilt,
+          (unsigned long)uiTiming.framesFlushed,
+          (unsigned long)uiTiming.framesSkipped,
+          (unsigned long)uiTiming.unchangedFrames,
+          (unsigned long)uiTiming.fullScreenRedraws,
+          (unsigned long)uiTiming.unnecessaryRedraws
+        );
+        logStage = 5;
+        return;
+      case 5:
+        LOG_INFO(
+          LogTag::APP,
+          "LED_STATE desired=%s/%u/%u/%u active=%s/%u/%u/%u sent=%s/%u/%u/%u pending=%s/%u/%u/%u status=%s retry=%u ackAge=%lums err=%s counts tx=%lu ack=%lu retry=%lu dupIgnored=%lu",
+          link.desiredLedMode,
+          link.desiredLedPower ? 1 : 0,
+          link.desiredLedBrightness,
+          link.desiredLedSpeed,
+          link.activeLedMode,
+          link.activeLedPower ? 1 : 0,
+          link.activeLedBrightness,
+          link.activeLedSpeed,
+          link.lastSentLedMode,
+          link.lastSentLedPower ? 1 : 0,
+          link.lastSentLedBrightness,
+          link.lastSentLedSpeed,
+          link.pendingLedMode,
+          link.pendingLedPower ? 1 : 0,
+          link.pendingLedBrightness,
+          link.pendingLedSpeed,
+          Esp8266Link::ledStatusName(link.ledStatus),
+          link.ledRetryCount,
+          link.lastLedAckMs == 0 ? 0UL : (unsigned long)(context.nowMs - link.lastLedAckMs),
+          link.lastLedErrReason,
+          (unsigned long)link.ledTx,
+          (unsigned long)link.ledAck,
+          (unsigned long)link.ledRetry,
+          (unsigned long)link.ledDuplicateIgnored
+        );
+        logStage = 6;
+        return;
+      case 6:
+        LOG_INFO(
+          LogTag::APP,
+          "LED_PERF interval=%lums txDelta=%lu ackDelta=%lu retryDelta=%lu txRate=%lu/min uartTxBytesDelta=%lu uartTxBytesRate=%lu/min",
+          (unsigned long)ledPerfElapsedMs,
+          (unsigned long)ledTxDelta,
+          (unsigned long)ledAckDelta,
+          (unsigned long)ledRetryDelta,
+          (unsigned long)ledTxPerMinute,
+          (unsigned long)uartTxByteDelta,
+          (unsigned long)uartTxBytesPerMinute
+        );
+        logStage = 7;
+        return;
+      case 7:
+        // Call runtime profile logs which contain additional LOG_INFO calls
+        logTaskRuntimeProfiles();
+        logOverrunAttributionSummary();
+        logStage = 8;
+        return;
+      case 8:
+        LOG_INFO(
+          LogTag::APP,
+          "fault state=%s retry=%u recover=%u reset=%u syncReason=%s last=%s/%s repeat=%u reason=%s counters link=%lu proto=%lu sched=%lu hw=%lu drv=%lu uart tx=%lu/%luB rx=%lu/%luB crc=%lu to=%lu resync=%lu malformed=%lu",
+          Esp8266Link::stateName(link.state),
+          link.retryCount,
+          link.recoveryAttemptCount,
+          link.transportResetCount,
+          link.lastSyncReason,
+          FaultTracker::sourceName(lastFault.source),
+          FaultTracker::codeName(lastFault.code),
+          lastFault.repeatCount,
+          link.lastRecoveryReason,
+          (unsigned long)faults.counters.link,
+          (unsigned long)faults.counters.protocol,
+          (unsigned long)faults.counters.schedulerOverrun,
+          (unsigned long)faults.counters.hardwareRequest,
+          (unsigned long)faults.counters.driver,
+          (unsigned long)uart.txPackets,
+          (unsigned long)uart.txBytes,
+          (unsigned long)uart.rxPackets,
+          (unsigned long)uart.rxBytes,
+          (unsigned long)uart.crcErrors,
+          (unsigned long)uart.timeoutErrors,
+          (unsigned long)uart.resyncCount,
+          (unsigned long)uart.malformedPackets
+        );
+        // Reset for next full cycle
+        logStage = 0;
+        lastLedPerfMs = context.nowMs;
+        lastLedPerfTx = link.ledTx;
+        lastLedPerfAck = link.ledAck;
+        lastLedPerfRetry = link.ledRetry;
+        lastLedPerfUartTxBytes = uart.txBytes;
+        return;
+    }
+  }
+  
+  // Full log cycle complete, start next cycle
+  if(logStage == 0) {
+    // Initialize state for new log cycle - capture all data once, then print one line per invocation
+    lastLedPerfMs = context.nowMs;
+    lastLedPerfTx = Esp8266Link::diagnostics().ledTx;
+    lastLedPerfAck = Esp8266Link::diagnostics().ledAck;
+    lastLedPerfRetry = Esp8266Link::diagnostics().ledRetry;
+    lastLedPerfUartTxBytes = UartTrafficMonitor::stats().txBytes;
+    // Start printing logs with first stage in next invocation
+    logStage = 1;
+    return;
+  }
 }
 
 void logTaskRuntimeProfiles(){
