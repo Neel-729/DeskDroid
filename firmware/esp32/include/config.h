@@ -8,6 +8,7 @@ constexpr const char* ProjectName = "DeskDroid";
 
 namespace Config {
 
+constexpr uint16_t NeoPixelCount = 100;
 constexpr uint32_t Esp8266SerialBaud = 115200;
 constexpr size_t Esp8266MaxPacketSize = 128;
 constexpr uint8_t Esp8266MaxPacketTokens = 12;

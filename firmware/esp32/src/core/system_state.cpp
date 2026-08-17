@@ -429,10 +429,13 @@ void setBuzzerEnabled(bool enabled){
 }
 
 void markProtocolSynced(uint32_t revision, uint16_t sequenceId){
-  state.protocol.lastSyncRevision = revision;
-  state.protocol.lastSequenceId = sequenceId;
-  markChanged(StateChange::Protocol);
-  state.protocol.lastSyncRevision = stateRevision;
+  // Update synchronization metadata only - do NOT call markChanged()
+  // markChanged() would increment stateRevision, creating a new sync loop
+  if(state.protocol.lastSyncRevision != revision || state.protocol.lastSequenceId != sequenceId){
+    state.protocol.lastSyncRevision = revision;
+    state.protocol.lastSequenceId = sequenceId;
+    // Protocol metadata updates are not application state changes - they never trigger new syncs
+  }
 }
 
 uint32_t revision(){

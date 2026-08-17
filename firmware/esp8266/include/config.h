@@ -7,7 +7,7 @@ namespace Config {
 
 constexpr uint32_t SerialBaud = 115200;
 
-constexpr uint16_t NeoPixelCount = 83;
+constexpr uint16_t NeoPixelCount = 100;
 constexpr uint8_t DefaultBrightness = 64;
 
 constexpr uint8_t RelayCount = 4;
