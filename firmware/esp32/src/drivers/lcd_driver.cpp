@@ -12,6 +12,7 @@ char displayedRows[2][17] = {
   "                "
 };
 bool displayCacheValid = false;
+bool currentBacklightEnabled = true;
 LcdDriver::TimingStats lcdTimingStats = {};
 
 void updateMax(uint32_t &currentMax, uint32_t value){
@@ -124,8 +125,9 @@ void writeRowInternal(uint8_t row, const char* text){
     for(uint8_t i = runStart; i < col; ++i){
       const uint8_t c = static_cast<uint8_t>(target[i]);
       // Send high nibble first (4-bit mode requirement for HD44780)
-      uint8_t highNibble = (c & 0xF0) | 0x09; // RS=1 (data), BL=1 (backlight on)
-      uint8_t lowNibble = ((c << 4) & 0xF0) | 0x09;
+      const uint8_t blBit = currentBacklightEnabled ? 0x08 : 0x00;
+      uint8_t highNibble = (c & 0xF0) | 0x01 | blBit; // RS=1 (data), BL=current state
+      uint8_t lowNibble = ((c << 4) & 0xF0) | 0x01 | blBit;
       // Toggle EN high to latch high nibble
       Wire.write(highNibble | 0x04); // EN=1
       Wire.write(highNibble); // EN=0
@@ -218,6 +220,7 @@ void writeFrame(const char* row0, const char* row1){
 }
 
 void setBacklight(bool enabled){
+  currentBacklightEnabled = enabled;
   if(enabled) lcd.backlight();
   else lcd.noBacklight();
 }
