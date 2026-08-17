@@ -1,6 +1,7 @@
 #include "navigation.h"
 
 #include "navigation_stack.h"
+#include "idle_manager.h"
 #include "../core/logging.h"
 
 namespace {
@@ -99,6 +100,13 @@ void commit(){
         NavigationStack::push(nextState);
     }
 
+    // Update idle manager state based on whether we're now at home
+    if (AppNavigation::isAtHome()) {
+        IdleManager::setActive(false);
+    } else {
+        IdleManager::setActive(true);
+    }
+
     transitionPending = false;
     stateChanged = true;
 }
@@ -112,6 +120,7 @@ void back(){
 
 void goHome(){
   NavigationStack::reset();
+  IdleManager::setActive(false);
   stateChanged = true;
   LOG_INFO(LogTag::APP, "[NAV] Going home");
 }

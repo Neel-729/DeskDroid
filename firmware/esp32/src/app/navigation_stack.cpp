@@ -82,7 +82,7 @@ AppState previous() {
 }
 
 bool isAtHome() {
-  return stackDepth <= 1 || peek() == STATE_CLOCK;
+  return peek() == STATE_CLOCK;
 }
 
 uint8_t depth() {
