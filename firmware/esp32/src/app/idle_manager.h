@@ -64,6 +64,12 @@ void blockIdleReturn(bool blocked);
 /// Check if idle return is currently blocked
 bool isIdleReturnBlocked();
 
+/// Set whether idle timer is active (armed)
+void setActive(bool active);
+
+/// Check if idle timer is currently active
+bool isActive();
+
 /// Debug: Print current state to Serial
 void debugPrint(unsigned long now);
 

@@ -9,6 +9,7 @@ unsigned long lastActivityTime = 0;
 IdleManager::IdleTimeout currentTimeout = IdleManager::IdleTimeout::THIRTY_SECONDS;
 bool idleReturnBlocked = false;
 bool timeoutFired = false;  // Latch flag to ensure timeout is only signaled/logged once
+bool isTimerActive = false; // Whether timer is armed/active
 
 // Visual feedback timing (show countdown 3 seconds before return)
 constexpr unsigned long FEEDBACK_LEAD_TIME_MS = 3000;
@@ -23,18 +24,14 @@ void begin() {
   currentTimeout = IdleTimeout::THIRTY_SECONDS;
   idleReturnBlocked = false;
   timeoutFired = false;  // Reset latch on initialization
-  LOG_INFO(LogTag::APP, "[IDLE] Manager initialized, timeout=%u seconds", 
+  isTimerActive = false; // Start disarmed since we begin at HOME
+  LOG_INFO(LogTag::APP, "[IDLE] Manager initialized, timeout=%u seconds, timer disarmed", 
            (uint16_t)currentTimeout);
 }
 
 bool update(unsigned long now) {
-  // If idle return is blocked, never trigger auto-return
-  if (idleReturnBlocked) {
-    return false;
-  }
-  
-  // If timeout is disabled, never trigger auto-return
-  if (currentTimeout == IdleTimeout::OFF) {
+  // If timer is not active, idle return is blocked, or timeout is disabled, never trigger auto-return
+  if (!isTimerActive || idleReturnBlocked || currentTimeout == IdleTimeout::OFF) {
     return false;
   }
   
@@ -58,7 +55,7 @@ void notifyActivity(unsigned long now) {
 }
 
 bool isIdle(unsigned long now) {
-  if (currentTimeout == IdleTimeout::OFF) {
+  if (!isTimerActive || currentTimeout == IdleTimeout::OFF) {
     return false;
   }
   
@@ -69,7 +66,7 @@ bool isIdle(unsigned long now) {
 }
 
 bool isIdleReturnCountdown(unsigned long now) {
-  if (idleReturnBlocked || currentTimeout == IdleTimeout::OFF) {
+  if (!isTimerActive || idleReturnBlocked || currentTimeout == IdleTimeout::OFF) {
     return false;
   }
   
@@ -82,7 +79,7 @@ bool isIdleReturnCountdown(unsigned long now) {
 }
 
 uint8_t secondsUntilIdleReturn(unsigned long now) {
-  if (idleReturnBlocked || currentTimeout == IdleTimeout::OFF) {
+  if (!isTimerActive || idleReturnBlocked || currentTimeout == IdleTimeout::OFF) {
     return 0;
   }
   
@@ -129,6 +126,26 @@ void blockIdleReturn(bool blocked) {
 
 bool isIdleReturnBlocked() {
   return idleReturnBlocked;
+}
+
+void setActive(bool active) {
+  if (isTimerActive != active) {
+    isTimerActive = active;
+    if (active) {
+      // When arming the timer, reset the last activity time and clear the timeout latch
+      lastActivityTime = millis();
+      timeoutFired = false;
+      LOG_INFO(LogTag::APP, "[IDLE] Timer armed");
+    } else {
+      // When disarming, clear the timeout latch to prevent stale state
+      timeoutFired = false;
+      LOG_INFO(LogTag::APP, "[IDLE] Timer disarmed");
+    }
+  }
+}
+
+bool isActive() {
+  return isTimerActive;
 }
 
 void debugPrint(unsigned long now) {
