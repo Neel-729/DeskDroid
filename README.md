@@ -1,8 +1,7 @@
 # DeskDroid
 ### A modular dual-MCU smart desktop ecosystem focused on automation, real-time interaction, embedded systems engineering, and scalable hardware architecture.
 
-[![Static Badge](https://img.shields.io/badge/Version-2.6.7-green)](https://github.com/Neel-729/DeskDroid)
-[![Static Badge](https://img.shields.io/badge/Previous--version-2.5-orange)](https://github.com/Neel-729/DeskDroid/blob/main/DeskDroidArchives/v2.5.main.cpp)
+[![Static Badge](https://img.shields.io/badge/Version-2.8.8-green)](https://github.com/Neel-729/DeskDroid)
 [![Static Badge](https://img.shields.io/badge/ESP32-Main%20Controller-blue)](#firmware-architecture)
 [![Static Badge](https://img.shields.io/badge/ESP8266-Output%20Processor-lightgrey)](#firmware-architecture)
 
@@ -15,8 +14,6 @@ DeskDroid is a modular embedded desktop assistant built around the ESP32 ecosyst
 The project combines:
 
 - Smart desktop utilities
-- Real-time hardware interaction
-- Embedded UI systems
 - Sensor and peripheral integration
 - Expandable automation features
 - Dual-MCU orchestration
@@ -33,19 +30,6 @@ The architecture emphasizes:
 - Expandability
 - Maintainability
 - Real-world product-oriented engineering
-
----
-
-## Version 2.6.2 Notes
-
-Version 2.6.2 reflects the current repo structure and firmware direction:
-
-- The ESP32 firmware is the canonical application layer.
-- The ESP8266 firmware is responsible for deterministic output execution.
-- UART protocol sync is documented and formalized.
-- System state is centralized and treated as the source of truth.
-- The codebase is organized around commands, services, protocol transport, and UI rendering.
-- Supporting design documentation is now split into focused markdown files.
 
 ---
 
@@ -79,6 +63,7 @@ Version 2.6.2 reflects the current repo structure and firmware direction:
 | DS1307 RTC      | Timekeeping and persistent clock       |
 | 16x2 LCD (I2C)  | User interface display                 |
 | Rotary Encoder  | Navigation and input                   |
+| TTP 229 BSF     | Macro keys |
 | Buzzer          | Alerts and audio feedback              |
 | NeoPixel LEDs   | Lighting effects and status indicators |
 | 12V 20A SMPS    | Main power supply                      |
@@ -123,7 +108,7 @@ The ESP32 owns product decisions and the canonical `SystemState`. Consumers read
 
 #### 4. Dual-MCU Execution Model
 
-The ESP32 decides what should happen. The ESP8266 applies the physical outputs, including LEDs and relays.
+The ESP32 decides what should happen. The ESP8266 applies the hardware outputs, including LEDs and relays.
 
 #### 5. Modular Expansion
 
@@ -154,12 +139,12 @@ The firmware is structured to support future peripherals, sensors, wireless modu
 - Start / stop / reset functionality
 - Live UI updates
 
-### Reminder System
+### Reminder Module
 
 - Scheduled reminders
 - Event-based notifications
 
-### Lighting Engine
+### Lighting Module
 
 - NeoPixel animations
 - System state indication
@@ -197,12 +182,7 @@ Use these tags to jump to the supporting design docs:
 - Mobile companion app
 - Web dashboard
 - Bluetooth connectivity expansion
-- Voice interaction
 - Smart relay control
-- Touch sensor integration
-- Multi-controller distributed architecture
-- AI-assisted automation
-- Sensor ecosystem support
 - Advanced animation engine
 
 ### Long-Term Vision
@@ -210,11 +190,8 @@ Use these tags to jump to the supporting design docs:
 DeskDroid is intended to evolve from a desktop utility device into a modular smart environment controller capable of handling:
 
 - Workspace automation
-- Smart peripherals
 - Environmental monitoring
-- Productivity workflows
 - Real-time notifications
-- Intelligent interaction systems
 
 ---
 
@@ -321,7 +298,6 @@ Key priorities:
 - Non-blocking execution
 - Efficient event handling
 - Product-oriented system design
-- Deterministic physical output control
 
 ---
 
