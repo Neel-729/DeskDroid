@@ -1,348 +1,92 @@
 # DeskDroid
-### A modular dual-MCU smart desktop ecosystem focused on automation, real-time interaction, embedded systems engineering, and scalable hardware architecture.
 
-[![Static Badge](https://img.shields.io/badge/Version-2.8.8-green)](https://github.com/Neel-729/DeskDroid)
-[![Static Badge](https://img.shields.io/badge/ESP32-Main%20Controller-blue)](#firmware-architecture)
-[![Static Badge](https://img.shields.io/badge/ESP8266-Output%20Processor-lightgrey)](#firmware-architecture)
+DeskDroid is a two-firmware embedded desktop utility. An ESP32 owns the user interface, application state, clock, timers, reminders, settings, and link supervision. An ESP8266 is an output processor for four relays and a 100-pixel NeoPixel strip.
 
----
+This repository contains the current firmware projects plus older source snapshots. The live firmware is under `firmware/`; `DeskDroidArchives/` is historical and is not built by the current PlatformIO projects.
 
-## What is DeskDroid?
+## Current implementation
 
-DeskDroid is a modular embedded desktop assistant built around the ESP32 ecosystem, with the ESP8266 acting as a dedicated output processor.
+- ESP32 controller firmware version `2.8.1`.
+- ESP8266 output firmware version `0.1.0`.
+- 16x2 I2C LCD UI, DS1307 clock, rotary encoder, buzzer, and TTP229-BSF transition logging.
+- Clock with rotating motivational quotes, countdown timer, stopwatch, and five stored reminders.
+- Settings for backlight, LED preset/brightness, relay selection, light schedule, auto-return timeout, buzzer, quotes, time format, time, date, and firmware display.
+- ESP32-to-ESP8266 ASCII UART protocol with heartbeat, relay synchronization, separate LED-state acknowledgments, retries, and recovery.
+- ESP8266 NeoPixel effects: off, solid, breathing, rainbow, and ambient; relay outputs are active low.
 
-The project combines:
+The TTP229 input is currently read and logged as key press/release transitions. It is not connected to application actions in the live firmware.
 
-- Smart desktop utilities
-- Sensor and peripheral integration
-- Expandable automation features
-- Dual-MCU orchestration
-- Future IoT capabilities
-
-Instead of being a single-purpose gadget, DeskDroid is designed as a scalable embedded platform that can evolve into a fully integrated smart desk ecosystem.
-
-The architecture emphasizes:
-
-- Clean modular design
-- Non-blocking firmware principles
-- Hardware abstraction
-- Command-driven control
-- Expandability
-- Maintainability
-- Real-world product-oriented engineering
-
----
-
-## Core Features
-
-### Current Features
-
-- Real-time clock system
-- Timer functionality
-- Stopwatch functionality
-- Reminder system
-- NeoPixel lighting engine
-- Rotary encoder navigation
-- LCD-based UI system
-- Audio feedback using buzzer
-- Persistent settings storage
-- Event-driven application flow
-- Modular driver architecture
-- Centralized scheduler system
-- ESP32 ↔ ESP8266 link supervision
-- State synchronization over UART
-
----
-
-## Hardware Stack
-
-| Component       | Purpose                                |
-| --------------- | -------------------------------------- |
-| ESP32 DevKit V1 | Main system controller                 |
-| ESP8266         | Output processor for relays and LEDs   |
-| DS1307 RTC      | Timekeeping and persistent clock       |
-| 16x2 LCD (I2C)  | User interface display                 |
-| Rotary Encoder  | Navigation and input                   |
-| TTP 229 BSF     | Macro keys |
-| Buzzer          | Alerts and audio feedback              |
-| NeoPixel LEDs   | Lighting effects and status indicators |
-| 12V 20A SMPS    | Main power supply                      |
-
----
-
-## Firmware Architecture
-
-DeskDroid uses a layered modular architecture to keep the codebase scalable and maintainable.
+## Architecture
 
 ```text
-firmware/esp32/src/
-├── app/        → Application state, commands, and orchestration
-├── core/       → Events, scheduler, logging, settings, state
-├── services/   → Lighting, timer, connectivity, protocol, settings
-├── protocol/   → ESP8266 link, packet building, synchronization
-├── ui/         → Screen rendering and navigation
-├── features/   → User-facing feature modules
-└── utils/      → Shared utilities
-
-firmware/esp8266/src/
-├── led/        → Animation runtime and LED effects
-├── protocol/   → Packet parsing, dispatch, and responses
-├── relay/      → Relay output control
-├── state/      → Mirrored execution state
-└── ...
+ESP32 input/UI -> event queue -> application commands -> SystemState
+                                      |                 |
+                                      v                 v
+                                  local LCD/buzzer   UART link
+                                                        |
+                                                        v
+                                              ESP8266 state cache
+                                                /             \
+                                             relays        NeoPixels
 ```
 
-### Architecture Philosophy
+See [docs/architecture.md](docs/architecture.md), [docs/system_state.md](docs/system_state.md), and [docs/protocol_spec.md](docs/protocol_spec.md).
 
-#### 1. Hardware Abstraction
+## Hardware
 
-Drivers isolate hardware-specific logic from application logic.
+The verified software pin assignments and wiring assumptions are in [docs/HARDWARE.md](docs/HARDWARE.md). The repository does not verify power ratings, level shifting, relay isolation, or a complete schematic; do not infer those details from the firmware.
 
-#### 2. Command-Driven Flow
+## Prerequisites
 
-User-facing actions pass through `AppCommands` before they reach state or hardware layers.
+- PlatformIO Core or the PlatformIO VS Code extension.
+- USB access to an `esp32doit-devkit-v1` and a `nodemcuv2` board.
+- The connected peripherals described in [docs/HARDWARE.md](docs/HARDWARE.md).
 
-#### 3. Canonical State Ownership
+## Build, upload, and monitor
 
-The ESP32 owns product decisions and the canonical `SystemState`. Consumers read from state; they do not invent it.
+Run commands from the repository root:
 
-#### 4. Dual-MCU Execution Model
+```text
+pio run -d firmware/esp32
+pio run -d firmware/esp8266
 
-The ESP32 decides what should happen. The ESP8266 applies the hardware outputs, including LEDs and relays.
+pio run -d firmware/esp32 -t upload
+pio run -d firmware/esp8266 -t upload
 
-#### 5. Modular Expansion
-
-New features can be added without rewriting the entire firmware.
-
-#### 6. Scalable Design
-
-The firmware is structured to support future peripherals, sensors, wireless modules, and automation systems.
-
----
-
-## Current Modules
-
-### Clock Module
-
-- RTC integration
-- Real-time display
-- Persistent time tracking
-
-### Timer Module
-
-- Countdown timer support
-- Audio completion alerts
-- Timer alarm state handling
-
-### Stopwatch Module
-
-- Start / stop / reset functionality
-- Live UI updates
-
-### Reminder Module
-
-- Scheduled reminders
-- Event-based notifications
-
-### Lighting Module
-
-- NeoPixel animations
-- System state indication
-- Ambient desktop lighting
-- Sync-ready execution through ESP8266
-
-### Protocol Layer
-
-- UART packet formatting
-- Ping / pong supervision
-- Full-state synchronization
-- Mirror-state recovery
-
----
-
-## Documentation Tags
-
-Use these tags to jump to the supporting design docs:
-
-- `#architecture` → [docs/architecture.md](docs/architecture.md)
-- `#protocol` → [docs/protocol_spec.md](docs/protocol_spec.md)
-- `#system-state` → [docs/system_state.md](docs/system_state.md)
-- `#pinout` → [docs/pinout.md](docs/pinout.md)
-- `#development-notes` → [docs/development_notes.md](docs/development_notes.md)
-- `#v1-changelog` → [DeskDroidArchives/v1-Changelog.md](DeskDroidArchives/v1-Changelog.md)
-- `#v1.1-changelog` → [DeskDroidArchives/v1.1-chnagelog.md](DeskDroidArchives/v1.1-chnagelog.md)
-
----
-
-## Future Roadmap
-
-### Planned Features
-
-- Wi-Fi integration
-- Mobile companion app
-- Web dashboard
-- Bluetooth connectivity expansion
-- Smart relay control
-- Advanced animation engine
-
-### Long-Term Vision
-
-DeskDroid is intended to evolve from a desktop utility device into a modular smart environment controller capable of handling:
-
-- Workspace automation
-- Environmental monitoring
-- Real-time notifications
-
----
-
-## Tech Stack
-
-| Layer              | Technology         |
-| ------------------ | ------------------ |
-| Firmware Framework | Arduino / PlatformIO |
-| Build System       | PlatformIO         |
-| MCU Platform       | ESP32 + ESP8266    |
-| Language           | C++                |
-| Display Library    | LiquidCrystal_I2C  |
-| RTC Library        | RTClib             |
-| LED Library        | Adafruit NeoPixel  |
-
----
-
-## Getting Started
-
-### Requirements
-
-- VS Code
-- PlatformIO Extension
-- ESP32 DevKit V1
-- ESP8266 module
-- USB cable
-
----
-
-### Clone Repository
-
-```bash
-git clone https://github.com/Neel-729/DeskDroid.git
-cd DeskDroid
+pio device monitor -d firmware/esp32
+pio device monitor -d firmware/esp8266
 ```
 
----
+The projects use Arduino through PlatformIO. Build environments and library declarations are documented in [docs/BUILD.md](docs/BUILD.md). Uploading requires selecting the appropriate connected serial port when PlatformIO does not detect it automatically.
 
-### Build Firmware
+## Configuration and persistence
 
-Build the controller and output processor from their respective PlatformIO projects.
+Compile-time values are in `firmware/esp32/include/config.h`, `firmware/esp32/include/pins.h`, `firmware/esp32/include/version.h`, and their ESP8266 counterparts. Runtime settings and reminders use ESP32 Preferences storage. Relay states use a separate ESP32 NVS namespace. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
-```bash
-# ESP32 controller
-cd firmware/esp32
-pio run
+## Testing
 
-# ESP8266 output processor
-cd ../esp8266
-pio run
+There are no project test cases in the repository; the `test/` directories contain PlatformIO templates/placeholders only. The available checks are the two firmware builds and hardware/manual verification. See [docs/TESTING.md](docs/TESTING.md).
+
+## Deployment and recovery
+
+Deployment is a local USB upload of each firmware image. No OTA, release packaging, rollback, or fleet deployment mechanism is implemented or verified. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## Repository map
+
+```text
+firmware/esp32/       ESP32 PlatformIO project
+firmware/esp8266/     ESP8266 PlatformIO project
+hardware/              Wiring and reserved hardware directories
+docs/                  Current engineering documentation
+DeskDroidArchives/    Historical firmware snapshots and changelogs
+src/                   Older standalone/scaffold sources; not a current PlatformIO project
+tools/                 Reserved tooling directories; no live scripts are present
 ```
 
----
+## Development
 
-### Upload Firmware
-
-```bash
-# ESP32 controller
-cd firmware/esp32
-pio run --target upload
-
-# ESP8266 output processor
-cd ../esp8266
-pio run --target upload
-```
-
----
-
-### Serial Monitor
-
-```bash
-# ESP32 controller
-cd firmware/esp32
-pio device monitor
-```
-
----
-
-## Wiring Overview
-
-> Pin mappings may change as development progresses.
-
-| Peripheral     | Interface       |
-| -------------- | --------------- |
-| LCD            | I2C             |
-| RTC            | I2C             |
-| NeoPixels      | GPIO            |
-| Rotary Encoder | GPIO Interrupts |
-| Buzzer         | PWM GPIO        |
-| ESP8266 Link   | UART            |
-| Relays         | GPIO            |
-
----
-
-## Engineering Goals
-
-DeskDroid focuses heavily on real embedded engineering practices rather than quick prototyping.
-
-Key priorities:
-
-- Stable firmware architecture
-- Maintainable codebase
-- Expandable hardware ecosystem
-- Non-blocking execution
-- Efficient event handling
-- Product-oriented system design
-
----
-
-## Why This Project Exists
-
-Most DIY desk gadgets are isolated single-purpose builds.
-
-DeskDroid aims to solve that by creating a unified platform where multiple smart systems coexist under a scalable architecture.
-
-The project is also intended as a long-term embedded systems engineering journey involving:
-
-- Firmware architecture
-- Hardware design
-- Embedded UI/UX
-- Power management
-- Real-time systems
-- Automation engineering
-- Modular product design
-
----
-
-## Contributing
-
-Contributions, suggestions, architectural feedback, and hardware ideas are welcome.
-
-If you want to improve the firmware:
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes clearly
-4. Submit a pull request
-
----
+Read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before changing firmware. In particular, keep the ESP32 state ownership and ESP8266 execution-plane boundary intact, and validate both PlatformIO environments after changes.
 
 ## License
 
-This project is licensed under the MIT License.
-
-See the [LICENSE](LICENSE) file for details.
-
----
-
-## Author
-
-Built by Ace.
-> Neel Indalkar
-
-Focused on embedded systems, modular engineering, automation, and scalable smart hardware systems.
+DeskDroid is released under the MIT License; see [LICENSE](LICENSE).

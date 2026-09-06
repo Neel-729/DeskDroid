@@ -1,14 +1,15 @@
-# System State
+# System state
 
-The ESP32 is the source of truth. All subsystems write through `SystemStateStore`; consumers read `SystemStateStore::current()`.
+`SystemStateStore` is the ESP32 controller’s canonical in-memory state. `SystemStateStore::current()` exposes a read-only view to consumers; mutators increment a revision and enqueue `EVENT_STATE_CHANGED` with a `StateChange` mask unless the operation is a protocol metadata update.
 
-## Canonical Domains
+## Domains
 
 ```cpp
 struct SystemState {
   bool relayStates[4];
   LightingState lighting;
   TimerState timer;
+  StopwatchState stopwatch;
   ConnectivityState connectivity;
   AudioState audio;
   SettingsState settings;
@@ -16,29 +17,21 @@ struct SystemState {
 };
 ```
 
-`LightingState` owns enabled/scheduled output, brightness, animation mode, color, semantic LED mode, and idle preset.
+- `relayStates`: four controller-owned relay decisions.
+- `lighting`: enabled/power policy, schedule permission, LCD backlight, byte brightness, effect mode, RGB color, semantic mode, and idle preset.
+- `timer`: IDLE/EDITING/RUNNING/PAUSED/COMPLETE state, duration/remaining time, edit fields, end time, and alarm timing.
+- `stopwatch`: IDLE/RUNNING/PAUSED state, start time, and elapsed time.
+- `connectivity`: Wi-Fi status/RSSI and ESP8266 link status.
+- `audio`: volume, mute, and buzzer enablement.
+- `settings`: loaded `DeviceSettings` snapshot and dirty flag.
+- `protocol`: ESP8266 connection flag and last confirmed sync revision/sequence.
 
-`TimerState` owns active/alarm state, duration, remaining time, clock edit fields, and alarm timing.
+## Mutation and synchronization rules
 
-`ConnectivityState` owns WiFi and ESP8266 link status.
+Product-facing callers use `AppCommands`; services and feature modules use state-store mutators. Lighting mutations are consumed by `LightingService` and the ESP8266 LED path. Relay mutations are persisted by `AppCommands::setRelay` and request relay synchronization. Timer and reminder mutations drive UI/alarm behavior on the ESP32.
 
-`AudioState` owns volume, mute, and buzzer enablement.
+The ESP32 sends relay state as `FULL_SYNC`. The ESP8266 stores only a `StateSnapshot` mirror for four relays plus LED state. `SYNC_OK` records the ESP32 revision and sequence metadata; it does not create another state-change event.
 
-`SettingsState` owns the loaded settings snapshot and dirty flag.
+## Defaults
 
-`ProtocolState` owns ESP8266 confirmed sync metadata.
-
-## Update Rules
-
-- Do not mutate `SystemState` directly.
-- Use `AppCommands` for product-facing actions.
-- Use `SystemStateStore` mutators only inside command and service code.
-- Every meaningful mutation increments `revision()`.
-- Mutations emit `EVENT_STATE_CHANGED` with a `StateChange` mask.
-- Services react to state events and perform hardware/protocol work.
-
-## Synchronization
-
-The ESP32 sends authoritative `FULL_SYNC` packets built from `SystemState`. The ESP8266 stores only mirror state and confirms with `SYNC_OK`.
-
-Confirmed sync updates `SystemState.protocol.lastSyncRevision` and `lastSequenceId`. This prepares the firmware for diff-based synchronization and persisted state serialization.
+The state structures initialize to a five-minute timer, enabled solid lighting with RGB `(30,0,20)`, LED byte brightness 128, four relays off, and idle audio/connection states. Settings loading then applies Preferences defaults; see [CONFIGURATION.md](CONFIGURATION.md) for the persisted defaults and the timeout persistence limitation.

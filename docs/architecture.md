@@ -1,151 +1,100 @@
-# DeskDroid API-First Architecture
+# Architecture
 
-DeskDroid is a dual-MCU firmware with a strict control-plane/execution-plane split.
+## Scope
 
-```text
-UI
-  |
-Application commands
-  |
-Canonical SystemState
-  |
-Services
-  |
-ESP8266 protocol transport
-  |
-Hardware execution
+The live system consists of two independent Arduino/PlatformIO firmware projects. The ESP32 is the application/controller plane. The ESP8266 is a command-driven execution plane for relays and NeoPixels. They communicate over a direct ASCII UART link.
+
+## Component boundaries
+
+```mermaid
+flowchart LR
+  Input[Encoder and TTP229] --> Events[ESP32 event queue]
+  Events --> App[Application and AppCommands]
+  App --> State[SystemStateStore]
+  State --> Services[ESP32 services]
+  Services --> Local[LCD and buzzer]
+  Services --> Link[Esp8266Link]
+  Link -->|ASCII UART| Protocol[ESP8266 Protocol]
+  Protocol --> Cache[StateCache]
+  Cache --> Relay[RelayManager]
+  Cache --> LEDs[LedEngine and effects]
 ```
 
-## Module Ownership
+### ESP32
 
-ESP32 owns UI, navigation, command validation, canonical state, WiFi, OTA-ready settings, reminders, timers, persistence, automation, and ESP8266 orchestration.
+- `firmware/esp32/src/main.cpp` delegates `setup()` and `loop()` to `Application`.
+- `app/application.cpp` initializes hardware, runs the boot animation, owns the scheduler, dispatches events, builds LCD frames, and emits diagnostics.
+- `app/application_commands.*` is the product-facing mutation layer for lighting, relays, timer, reminders, clock, audio, Wi-Fi initiation, and settings.
+- `core/system_state.*` stores canonical relay, lighting, timer, stopwatch, connectivity, audio, settings, and protocol metadata. Mutations increment a revision and enqueue `EVENT_STATE_CHANGED`.
+- `core/settings_store.*` loads and saves device settings and five reminders through the ESP32 `Preferences` API.
+- `core/persistent_storage.*` stores four relay states as one packed byte in a separate NVS namespace.
+- `core/events.*` provides a 64-entry ring queue. Consecutive encoder events of the same type are coalesced.
+- `core/scheduler.*` runs the cooperative task table and records runtime/overrun statistics.
+- `services/` connects state changes to lighting schedule/backlight, timer completion, protocol synchronization, connectivity observation, and local audio.
+- `protocol/` frames/parses UART packets, supervises liveness, retries full sync, retries LED state application, and records UART diagnostics.
+- `ui/` renders two 16-character LCD rows. `drivers/` contains the active LCD, RTC, buzzer, and encoder drivers.
 
-ESP8266 owns LED rendering, animation runtime, relay output application, deterministic frame timing, heartbeat responses, command queueing, and mirrored execution state. It must not make product decisions such as when an alarm starts, which animation means timer done, or whether settings are valid.
+### ESP8266
 
-## Refactored Folder Structure
+- `src/main.cpp` constructs the state cache, relay manager, LED engine, runtime, watchdog, command queue, and protocol objects.
+- `protocol/` accepts framed packets, validates tokens, queues commands, dispatches commands, and emits acknowledgments/errors.
+- `state/` stores the mirrored four-relay/LED snapshot and validates `FULL_SYNC` packets.
+- `relay/` applies active-low relay outputs.
+- `led/` schedules 10 ms NeoPixel frames and renders the five effect types.
+- `system/` tracks boot/sync/running/disconnected states, records heartbeats, and recovers stalled protocol/runtime paths.
 
-```text
-firmware/esp32/src/
-  app/
-    application.cpp
-    application_commands.{h,cpp}
-    settings_flow.{h,cpp}
-  core/
-    events.{h,cpp}
-    system_state.{h,cpp}
-    settings_store.{h,cpp}
-  services/
-    audio_service.{h,cpp}
-    connectivity_service.{h,cpp}
-    lighting_service.{h,cpp}
-    protocol_service.{h,cpp}
-    settings_service.{h,cpp}
-    timer_service.{h,cpp}
-    services.{h,cpp}
-  protocol/
-    esp8266_link.{h,cpp}
-    packet_builder.{h,cpp}
-    synchronization_manager.{h,cpp}
-  ui/
-    screens.{h,cpp}
+## ESP32 initialization
 
-firmware/esp8266/src/
-  protocol/
-  state/
-  led/
-  relay/
-  system/
-```
+`Application::setup()` performs this sequence:
 
-## State Flow
+1. Start Serial, fault tracking, settings storage, and settings loading.
+2. Initialize `SystemStateStore`, navigation, idle management, and relay-state NVS restoration.
+3. Initialize the local LCD, custom LCD character, and buzzer.
+4. Start the DS1307 driver. If it cannot be initialized, display `RTC ERROR` and remain in a delay loop. If the RTC is not running, adjust it to the compile timestamp.
+5. Start services, encoder input, and TTP229 polling.
+6. Apply the canonical backlight state and load reminders.
+7. Run the boot animation, initialize the clock feature, clear the LCD cache, reset scheduler statistics, and enter the main loop.
 
-Example: brightness change.
+## ESP32 runtime schedule
 
-1. UI edits `LED Brightness` in `SettingsFlow`.
-2. `SettingsFlow` calls `AppCommands::setBrightnessLevel`.
-3. `SystemStateStore` updates `SystemState.lighting.brightness`.
-4. `SystemStateStore` emits `EVENT_STATE_CHANGED` with `StateChange::Lighting`.
-5. `ProtocolService` requests an ESP8266 state sync.
-6. `Esp8266Link` sends `<FULL_SYNC|SEQ=n|...|BR=value|...>`.
-7. ESP8266 applies the mirror state and replies `<SYNC_OK|SEQ=n>`.
-8. ESP32 records the confirmed protocol revision in `SystemState.protocol`.
-9. UI reads canonical state through feature/screen data, not through drivers.
+The scheduler is cooperative and runs from `Application::loop()` followed by a 1 ms delay. The configured tasks are:
 
-## Command/API Layer
+| Task | Interval | Responsibility |
+| --- | ---: | --- |
+| `esp8266-link` | every loop | Receive UART data and supervise link/sync/LED state |
+| `buzzer` | 5 ms | End active buzzer pulses |
+| `hardware` | every loop | Execute queued local hardware requests |
+| `lighting` | 1 s | Re-evaluate the automatic lighting schedule |
+| `timer` | 50 ms | Update countdown and timer alarm timing |
+| `reminder-check` | 1 s | Detect due reminders |
+| `reminder-alarm` | 50 ms | Beep an active reminder alarm and time it out |
+| `nav-monitor` | every loop | No-op; navigation monitoring is in `EncoderDriver` |
+| `input` | 10 ms | Read TTP229 and encoder events |
+| `events` | every loop | Dispatch queued events and apply idle auto-return |
+| `ui` | 50 ms | Commit navigation and render/flush changed LCD rows |
+| `diagnostics` | 30 s | Emit scheduler, LCD, LED, UART, and fault diagnostics over Serial |
 
-All frontends must call `AppCommands`, including the physical UI today and serial, mobile, backend, or OTA integrations later.
+## Event and state flow
 
-Implemented command entry points include:
+Input events are queued by `InputService`, then drained by `Application::processEvents`. Services see each event first; application handlers then update navigation/features. State mutations enqueue `EVENT_STATE_CHANGED`, which drives protocol and local lighting reactions. The UI reads feature/state data and writes an LCD frame; the LCD driver caches characters and writes only changed runs.
 
-- `setBrightness(uint8_t)`
-- `setBrightnessLevel(uint8_t)`
-- `setAnimationMode(AnimationMode)`
-- `setColor(RGBColor)`
-- `setLedMode(LedState)`
-- `setIdlePreset(LedIdlePreset)`
-- `startTimer(uint32_t)`
-- `pauseTimer(uint32_t)`
-- `stopTimer()`
-- `resetTimer()`
-- `setTimerDuration(uint32_t)`
-- `setReminder(...)`
-- `syncClock(...)`
-- `setVolume(uint8_t)`
-- `setMuted(bool)`
-- `connectWifi(...)`
-- `applySettings(...)`
-- `saveSettings(...)`
+`SystemStateStore` is canonical for controller state. The ESP8266 `StateCache` is a mirror used to apply the latest relay snapshot and LED state; it does not schedule application alarms or own user settings.
 
-## Service Layer
+## Navigation
 
-- `LightingService`: converts settings and time schedule into canonical lighting/backlight state.
-- `TimerService`: updates timer completion and reacts to timer events.
-- `AudioService`: owns buzzer execution and respects canonical audio state.
-- `ConnectivityService`: mirrors WiFi status into `SystemState.connectivity`.
-- `SettingsService`: persistence facade around settings load/save.
-- `ProtocolService`: owns ESP8266 synchronization requests and link status.
+`NavigationStack` stores up to eight `AppState` values and starts at `STATE_CLOCK`. The main-screen rotation order is Clock, Timer, Stopwatch, Reminders, Settings. Nested screens are pushed through `AppNavigation::enter`; the back operation pops the stack. A 1000 ms encoder hold emits `EVENT_LONG_PRESS` and the current application handler resets navigation to Clock, except that any interaction while a reminder alarm is active stops that alarm first.
 
-The ESP32 local hardware request queue is now limited to ESP32-local hardware such as LCD and buzzer. It no longer renders NeoPixels or calls protocol mutators directly.
+## Failure and recovery paths
 
-## ESP8266 Protocol Architecture
+- RTC initialization failure is fatal to the application loop after showing `RTC ERROR`.
+- Full-sync build/send failure, heartbeat timeout, serial failure, malformed-packet bursts, and ESP8266 error packets enter ESP32 link recovery.
+- ESP32 retries sync every 1000 ms up to five attempts, waits 1500 ms between recovery attempts, and reinitializes `Serial2` after three recovery attempts.
+- LED state application waits 750 ms for an acknowledgment and retries up to three times with bounded backoff.
+- ESP8266 rejects malformed/oversized/unknown/invalid commands with `ERR` responses. Its watchdog clears the protocol packet state and command queue after sync or runtime stalls, then returns the runtime to `WAITING_FOR_SYNC`.
 
-`Esp8266Link` is the transport/synchronization layer. It handles packet framing, sequence IDs for heartbeat/sync packets, heartbeat supervision, retry timing, reconnect, timeout recovery, and authoritative full-state synchronization.
+## Known boundary/maintenance findings
 
-The ESP8266 command queue still serializes execution-plane packet handling. It accepts compatible old packets plus sequenced packets for `PING` and `FULL_SYNC`, and it echoes `SEQ=` in `PONG`, `ACK`, and `SYNC_OK` responses when present.
-
-## Anti-Patterns Found
-
-- Timer state lived in private feature globals.
-- Settings UI directly requested LED protocol/hardware changes.
-- ESP32 hardware request execution touched NeoPixel rendering and ESP8266 link mutators.
-- Protocol layer exposed state mutation functions instead of behaving as transport.
-- UI/application logic triggered buzzer hardware requests directly in many handlers.
-- Canonical state only covered a small LED/relay subset.
-
-## Migration Strategy
-
-1. Keep existing UI screens stable while redirecting writes through `AppCommands`.
-2. Move feature globals into `SystemState` one domain at a time.
-3. Let services subscribe to `EVENT_STATE_CHANGED`.
-4. Keep ESP8266 as a mirror-only execution engine.
-5. Add serialization and diff sync on top of `SystemState` revisions.
-6. Migrate future serial/mobile/backend commands to `AppCommands` without new business logic.
-7. Remove unused legacy ESP32 NeoPixel driver files after hardware validation confirms LED output is fully delegated.
-
-## Example API Usage
-
-```cpp
-AppCommands::setBrightnessLevel(7);
-AppCommands::setColor(RGBColor(255, 40, 0));
-AppCommands::setAnimationMode(AnimationMode::Breathing);
-AppCommands::startTimer(millis());
-AppCommands::saveSettings(SettingsFlow::settings());
-```
-
-## Suggested Refactors
-
-- Add unit-style host tests for `SystemStateStore` mutators and event emission.
-- Add protocol tests for `SEQ=` ACK/NACK and retry behavior.
-- Move reminders into a `ReminderState` domain next.
-- Replace full sync with revisioned diffs after beta hardware is stable.
-- Remove ESP32 NeoPixel dependency from `platformio.ini` once the legacy driver is deleted.
+- `firmware/esp32/src/drivers/neopixel_driver.cpp` is compiled but not called by the live `Application`; current LED output is delegated to the ESP8266.
+- `firmware/esp32/src/app/navigation_manager.cpp` and `firmware/esp32/src/features/lighting.cpp` are present but the live application uses `AppNavigation`/`NavigationStack` and `LightingService` instead.
+- Wi-Fi status observation and a `connectWifi` API exist, but no credentials/configuration or connection workflow is wired into the UI or deployment process.
+- `src/` contains an older scheduler/logging scaffold and is not referenced by either current `platformio.ini`.

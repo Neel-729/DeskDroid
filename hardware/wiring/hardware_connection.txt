@@ -1,27 +1,15 @@
-ESP32
+DeskDroid wiring reference
 
-| GPIO | Function          |
-| ---- | ----------------- |
-| 23   | Buzzer            |
-| 5    | Encoder SW        |
-| 16   | UART RX (ESP8266) |
-| 17   | UART TX (ESP8266) |
-| 18   | Encoder DT        |
-| 19   | Encoder CLK       |
-| 21   | LCD + RTC SDA     |
-| 22   | LCD + RTC SCL     |
-| 32   | TTP229 SCL        |
-| 35   | TTP229 SDO        |
+The authoritative, source-verified pin assignments and wiring assumptions are maintained in:
 
+    docs/HARDWARE.md
+    docs/pinout.md
 
-ESP8266
+Summary:
 
-| GPIO | Function          |
-| ---- | ----------------- |
-| D4   | NeoPixel          |
-| D1   | Relay 1           |
-| D2   | Relay 2           |
-| D5   | Relay 3           |
-| D6   | Relay 4           |
+ESP32 to ESP8266 UART:
+    ESP32 GPIO17 (TX) -> ESP8266 GPIO3 (RX)
+    ESP32 GPIO16 (RX) <- ESP8266 GPIO1 (TX)
+    Common ground required by the documented wiring assumption.
 
-
+The firmware configures both sides for 115200 baud, 8N1. Power ratings, voltage compatibility, level shifting, relay isolation, and the complete schematic are not specified by this repository.
